@@ -1,0 +1,13 @@
+{
+  "poll_seconds": 30,
+  "remote_debugging_port": 39225,
+  "refresh_page_each_poll": false,
+  "reload_wait_seconds": 4,
+  "browser_mode": "hidden",
+  "minimize_edge_after_data": true,
+  "close_edge_on_exit": true,
+  "widget_width": 150,
+  "widget_height": 72,
+  "widget_x": null,
+  "widget_y": null
+}
