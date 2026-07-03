@@ -51,10 +51,13 @@ DEFAULT_CONFIG = {
     "system_poll_seconds": 1,
     "gauge_animation_ms": 100,
     "widget_width": 286,
-    "widget_height": 78,
+    "widget_height": 50,
     "widget_x": None,
     "widget_y": None,
 }
+
+LEGACY_WIDGET_SIZES = {(286, 78)}
+WIDGET_BG = "#14181b"
 
 
 EXTRACT_JS = r"""
@@ -846,24 +849,6 @@ def close_collector(port):
         log(f"close collector failed: {exc}")
 
 
-def rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
-    points = [
-        x1 + radius, y1,
-        x2 - radius, y1,
-        x2, y1,
-        x2, y1 + radius,
-        x2, y2 - radius,
-        x2, y2,
-        x2 - radius, y2,
-        x1 + radius, y2,
-        x1, y2,
-        x1, y2 - radius,
-        x1, y1 + radius,
-        x1, y1,
-    ]
-    return canvas.create_polygon(points, smooth=True, **kwargs)
-
-
 class FILETIME(ctypes.Structure):
     _fields_ = [
         ("dwLowDateTime", ctypes.c_uint32),
@@ -974,12 +959,18 @@ class UsageWidget:
         self.root.title("Codex Usage")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.configure(bg="#101214")
+        self.root.configure(bg=WIDGET_BG)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.w = int(self.cfg.get("widget_width") or DEFAULT_CONFIG["widget_width"])
         self.h = int(self.cfg.get("widget_height") or DEFAULT_CONFIG["widget_height"])
-        if self.w < DEFAULT_CONFIG["widget_width"] or self.h < DEFAULT_CONFIG["widget_height"] or self.w > 420 or self.h > 150:
+        if (self.w, self.h) in LEGACY_WIDGET_SIZES:
+            self.w = DEFAULT_CONFIG["widget_width"]
+            self.h = DEFAULT_CONFIG["widget_height"]
+            self.cfg["widget_width"] = self.w
+            self.cfg["widget_height"] = self.h
+            save_config(self.cfg)
+        elif self.w < 240 or self.h < 46 or self.w > 420 or self.h > 150:
             self.w = DEFAULT_CONFIG["widget_width"]
             self.h = DEFAULT_CONFIG["widget_height"]
             self.cfg["widget_width"] = self.w
@@ -990,7 +981,7 @@ class UsageWidget:
             width=self.w,
             height=self.h,
             highlightthickness=0,
-            bg="#101214",
+            bg=WIDGET_BG,
             bd=0,
         )
         self.canvas.pack(fill="both", expand=True)
@@ -1015,20 +1006,20 @@ class UsageWidget:
 
     def _build_canvas(self):
         c = self.canvas
-        self.bg = rounded_rect(c, 1, 1, self.w - 1, self.h - 1, 8, fill="#14181b", outline="#2b3238")
-        self.status_dot = c.create_oval(7, 6, 14, 13, fill="#f6c177", outline="")
-        self.close_btn = c.create_text(self.w - 10, 10, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 9), tags=("close",))
+        self.bg = c.create_rectangle(0, 0, self.w, self.h, fill=WIDGET_BG, outline="")
+        self.status_dot = c.create_oval(5, 5, 10, 10, fill="#f6c177", outline="")
+        self.close_btn = c.create_text(self.w - 8, 8, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 8), tags=("close",))
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
             self.bitmap_text = {
-                "cpu_label": c.create_text(42, 46, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 8)),
-                "mem_label": c.create_text(101, 46, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 8)),
-                "five_label": c.create_text(169, 31, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 8)),
-                "five_value": c.create_text(169, 42, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 10)),
-                "five_reset": c.create_text(169, 54, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 7)),
-                "week_label": c.create_text(234, 31, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 8)),
-                "week_value": c.create_text(234, 42, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 10)),
-                "week_reset": c.create_text(234, 54, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 7)),
+                "cpu_label": c.create_text(38, 30, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "mem_label": c.create_text(91, 30, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "five_label": c.create_text(164, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
+                "five_value": c.create_text(164, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                "five_reset": c.create_text(164, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                "week_label": c.create_text(229, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
+                "week_value": c.create_text(229, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                "week_reset": c.create_text(229, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
             }
             self._render_bitmap_dials()
             self._sync_bitmap_text()
@@ -1039,35 +1030,35 @@ class UsageWidget:
             return
 
         self.cpu_gauge = self._create_metric_gauge(
-            cx=42,
-            cy=49,
-            radius=26,
+            cx=38,
+            cy=30,
+            radius=17,
             label="CPU",
             color="#ffb86b",
         )
         self.mem_gauge = self._create_metric_gauge(
-            cx=101,
-            cy=49,
-            radius=26,
+            cx=91,
+            cy=30,
+            radius=17,
             label="MEM",
             color="#c792ea",
         )
         self.five_ring = self._create_ring(
-            cx=169,
-            cy=42,
-            radius=24,
+            cx=164,
+            cy=26,
+            radius=18,
             label="5h",
             color="#62c6ff",
-            light_color="#14181b",
+            light_color=WIDGET_BG,
             timer_color="#237da3",
         )
         self.week_ring = self._create_ring(
-            cx=234,
-            cy=42,
-            radius=24,
+            cx=229,
+            cy=26,
+            radius=18,
             label="7d",
             color="#5be49b",
-            light_color="#14181b",
+            light_color=WIDGET_BG,
             timer_color="#238a54",
         )
 
@@ -1085,7 +1076,7 @@ class UsageWidget:
             extent=-230,
             style="arc",
             outline="#283139",
-            width=4,
+            width=3,
         )
         segments = []
         segment_count = 28
@@ -1093,7 +1084,7 @@ class UsageWidget:
             segment = self.canvas.create_line(
                 *self._gauge_segment_points(cx, cy, radius, index / segment_count, (index + 0.72) / segment_count),
                 fill=self._metric_gradient_color((index + 1) / segment_count),
-                width=4,
+                width=3,
                 capstyle=tk.ROUND,
                 state="hidden",
             )
@@ -1114,7 +1105,7 @@ class UsageWidget:
             text=label,
             anchor="center",
             fill="#d7dee2",
-            font=("Segoe UI Semibold", 8),
+            font=("Segoe UI Semibold", 7),
         )
         return {
             "cx": cx,
@@ -1134,8 +1125,8 @@ class UsageWidget:
 
     def _create_ring(self, cx, cy, radius, label, color, light_color, timer_color):
         box = (cx - radius, cy - radius, cx + radius, cy + radius)
-        bg = self.canvas.create_oval(*box, outline="#273038", width=5)
-        inner_radius = radius - 8
+        bg = self.canvas.create_oval(*box, outline="#273038", width=4)
+        inner_radius = radius - 6
         inner_box = (
             cx - inner_radius,
             cy - inner_radius,
@@ -1151,7 +1142,7 @@ class UsageWidget:
         ring = self.canvas.create_line(
             *self._ring_points(cx, cy, radius, 0),
             fill=color,
-            width=5,
+            width=4,
             capstyle=tk.ROUND,
             smooth=True,
             splinesteps=24,
@@ -1162,7 +1153,7 @@ class UsageWidget:
             text=label,
             anchor="center",
             fill="#d9edf5",
-            font=("Segoe UI Semibold", 8),
+            font=("Segoe UI Semibold", 7),
         )
         value_id = self.canvas.create_text(
             cx,
@@ -1170,7 +1161,7 @@ class UsageWidget:
             text="--",
             anchor="center",
             fill="#ffffff",
-            font=("Segoe UI Semibold", 10),
+            font=("Segoe UI Semibold", 9),
         )
         reset_id = self.canvas.create_text(
             cx,
@@ -1178,7 +1169,7 @@ class UsageWidget:
             text="",
             anchor="center",
             fill="#d6e3e8",
-            font=("Segoe UI Semibold", 7),
+            font=("Segoe UI Semibold", 6),
         )
         return {
             "cx": cx,
@@ -1248,10 +1239,10 @@ class UsageWidget:
         image = Image.new("RGBA", (self.w * scale, self.h * scale), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        self._draw_bitmap_gauge(draw, 42, 49, 26, self.cpu_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_gauge(draw, 101, 49, 26, self.mem_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_ring(draw, 169, 42, 24, self.dial_state["five"], "#62c6ff", "#237da3", scale)
-        self._draw_bitmap_ring(draw, 234, 42, 24, self.dial_state["week"], "#5be49b", "#238a54", scale)
+        self._draw_bitmap_gauge(draw, 38, 30, 17, self.cpu_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 91, 30, 17, self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_ring(draw, 164, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
+        self._draw_bitmap_ring(draw, 229, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
 
         image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
         self.dial_photo = ImageTk.PhotoImage(image)
@@ -1275,7 +1266,7 @@ class UsageWidget:
         cy *= scale
         radius *= scale
         percent = max(0.0, min(100.0, float(percent or 0.0)))
-        width = 4 * scale
+        width = 3 * scale
         bg_points = self._bitmap_gauge_arc_points(cx, cy, radius, 0.0, 1.0)
         self._draw_round_line(draw, bg_points, "#283139", width)
 
@@ -1292,17 +1283,17 @@ class UsageWidget:
         x2 = cx + length * math.cos(angle)
         y2 = cy - length * math.sin(angle)
         draw.line([cx, cy, x2, y2], fill="#eef2f3", width=2 * scale)
-        hub = 3 * scale
+        hub = 2.5 * scale
         draw.ellipse([cx - hub, cy - hub, cx + hub, cy + hub], fill="#eef2f3")
 
     def _draw_bitmap_ring(self, draw, cx, cy, radius, state, color, timer_color, scale):
         cx *= scale
         cy *= scale
         radius *= scale
-        inner_radius = radius - 8 * scale
+        inner_radius = radius - 6 * scale
         outer_box = [cx - radius, cy - radius, cx + radius, cy + radius]
         inner_box = [cx - inner_radius, cy - inner_radius, cx + inner_radius, cy + inner_radius]
-        draw.ellipse(inner_box, fill="#14181b")
+        draw.ellipse(inner_box, fill=WIDGET_BG)
 
         reset_fraction = state.get("reset_fraction")
         if reset_fraction is not None:
@@ -1312,11 +1303,11 @@ class UsageWidget:
             elif reset_fraction > 0:
                 draw.polygon(self._timer_slice_points(cx, cy, inner_radius, reset_fraction), fill=timer_color)
 
-        draw.arc(outer_box, start=0, end=360, fill="#273038", width=5 * scale)
+        draw.arc(outer_box, start=0, end=360, fill="#273038", width=4 * scale)
         percent = state.get("percent")
         if percent is not None:
             percent = max(0.0, min(100.0, float(percent)))
-            self._draw_round_arc(draw, cx, cy, radius, 0, percent, color, 5 * scale)
+            self._draw_round_arc(draw, cx, cy, radius, 0, percent, color, 4 * scale)
 
     def _draw_round_arc(self, draw, cx, cy, radius, start_percent, end_percent, fill, width):
         points = self._arc_points(cx, cy, radius, start_percent, end_percent)
