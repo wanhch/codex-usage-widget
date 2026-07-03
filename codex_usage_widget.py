@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "minimize_edge_after_data": True,
     "close_edge_on_exit": True,
     "system_poll_seconds": 1,
+    "gauge_animation_ms": 100,
     "widget_width": 286,
     "widget_height": 78,
     "widget_x": None,
@@ -983,6 +984,7 @@ class UsageWidget:
         self._start_worker()
         self.root.after(250, self._drain_events)
         self.root.after(300, self._update_system_metrics)
+        self.root.after(400, self._animate_metric_gauges)
 
     def _place_window(self):
         x = self.cfg.get("widget_x")
@@ -1088,6 +1090,9 @@ class UsageWidget:
             "hub": hub,
             "label": label_id,
             "value": value_id,
+            "target": None,
+            "display": 0.0,
+            "last_text": "--",
         }
 
     def _create_ring(self, cx, cy, radius, label, color, light_color, timer_color):
@@ -1173,21 +1178,45 @@ class UsageWidget:
         if self.stop_event.is_set():
             return
         sample = self.system_sampler.sample()
-        self._set_metric_gauge(self.cpu_gauge, sample.get("cpu"))
-        self._set_metric_gauge(self.mem_gauge, sample.get("memory"))
+        self._set_metric_target(self.cpu_gauge, sample.get("cpu"))
+        self._set_metric_target(self.mem_gauge, sample.get("memory"))
         interval = max(1, int(self.cfg.get("system_poll_seconds") or 1))
         self.root.after(interval * 1000, self._update_system_metrics)
 
-    def _set_metric_gauge(self, gauge, percent):
+    def _set_metric_target(self, gauge, percent):
         if percent is None:
-            self.canvas.itemconfigure(gauge["value"], text="--")
-            self.canvas.itemconfigure(gauge["arc"], extent=0)
-            x2, y2 = self._gauge_needle_point(gauge, 0)
+            gauge["target"] = None
         else:
-            percent = max(0.0, min(100.0, float(percent)))
-            self.canvas.itemconfigure(gauge["value"], text=f"{percent:.0f}%")
-            self.canvas.itemconfigure(gauge["arc"], extent=-230 * percent / 100)
-            x2, y2 = self._gauge_needle_point(gauge, percent)
+            gauge["target"] = max(0.0, min(100.0, float(percent)))
+
+    def _animate_metric_gauges(self):
+        if self.stop_event.is_set():
+            return
+        self._animate_metric_gauge(self.cpu_gauge)
+        self._animate_metric_gauge(self.mem_gauge)
+        delay = max(50, int(self.cfg.get("gauge_animation_ms") or 100))
+        self.root.after(delay, self._animate_metric_gauges)
+
+    def _animate_metric_gauge(self, gauge):
+        target = gauge.get("target")
+        if target is None:
+            if gauge["last_text"] != "--":
+                self.canvas.itemconfigure(gauge["value"], text="--")
+                gauge["last_text"] = "--"
+            target = 0.0
+        else:
+            text = f"{target:.0f}%"
+            if gauge["last_text"] != text:
+                self.canvas.itemconfigure(gauge["value"], text=text)
+                gauge["last_text"] = text
+
+        display = float(gauge.get("display") or 0.0)
+        display += (target - display) * 0.25
+        if abs(target - display) < 0.15:
+            display = target
+        gauge["display"] = display
+        self.canvas.itemconfigure(gauge["arc"], extent=-230 * display / 100)
+        x2, y2 = self._gauge_needle_point(gauge, display)
         self.canvas.coords(gauge["needle"], gauge["cx"], gauge["cy"], x2, y2)
 
     def _gauge_needle_point(self, gauge, percent):

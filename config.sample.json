@@ -7,6 +7,7 @@
   "minimize_edge_after_data": true,
   "close_edge_on_exit": true,
   "system_poll_seconds": 1,
+  "gauge_animation_ms": 100,
   "widget_width": 286,
   "widget_height": 78,
   "widget_x": null,

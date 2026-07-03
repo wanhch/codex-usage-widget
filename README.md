@@ -24,6 +24,7 @@ https://chatgpt.com/codex/cloud/settings/analytics#usage
 
 - `poll_seconds`: 默认 `30`。
 - `system_poll_seconds`: 默认 `1`，控制 CPU/内存仪表盘刷新频率。
+- `gauge_animation_ms`: 默认 `100`，控制 CPU/内存指针动画刷新间隔，不影响系统采样频率。
 - `browser_mode`: 默认 `visible`，使用可见的独立 Edge 采集窗口。`hidden` 会把完整 Edge 放到屏幕外并最小化；`headless` 更轻但可能被页面校验拦截。
 - `refresh_page_each_poll`: 默认 `false`。如果页面不会自己更新，把它改成 `true`，程序会每轮轮询刷新页面，网络和 CPU 占用会稍高。
 - `minimize_edge_after_data`: 默认 `true`。
