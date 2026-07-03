@@ -1045,14 +1045,17 @@ class UsageWidget:
             outline="#283139",
             width=4,
         )
-        arc = self.canvas.create_arc(
-            *box,
-            start=205,
-            extent=0,
-            style="arc",
-            outline=color,
-            width=4,
-        )
+        segments = []
+        segment_count = 28
+        for index in range(segment_count):
+            segment = self.canvas.create_line(
+                *self._gauge_segment_points(cx, cy, radius, index / segment_count, (index + 0.72) / segment_count),
+                fill=self._metric_gradient_color((index + 1) / segment_count),
+                width=4,
+                capstyle=tk.ROUND,
+                state="hidden",
+            )
+            segments.append(segment)
         needle = self.canvas.create_line(
             cx,
             cy,
@@ -1068,16 +1071,8 @@ class UsageWidget:
             cy - 3,
             text=label,
             anchor="center",
-            fill="#9aa7af",
-            font=("Segoe UI Semibold", 7),
-        )
-        value_id = self.canvas.create_text(
-            cx,
-            cy + 15,
-            text="--",
-            anchor="center",
-            fill="#ffffff",
-            font=("Segoe UI Semibold", 9),
+            fill="#d7dee2",
+            font=("Segoe UI Semibold", 8),
         )
         return {
             "cx": cx,
@@ -1085,14 +1080,14 @@ class UsageWidget:
             "radius": radius,
             "color": color,
             "bg": bg,
-            "arc": arc,
+            "segments": segments,
+            "segment_count": segment_count,
             "needle": needle,
             "hub": hub,
             "label": label_id,
-            "value": value_id,
             "target": None,
             "display": 0.0,
-            "last_text": "--",
+            "visible_segments": -1,
         }
 
     def _create_ring(self, cx, cy, radius, label, color, light_color, timer_color):
@@ -1174,6 +1169,38 @@ class UsageWidget:
             ])
         return coords
 
+    def _gauge_segment_points(self, cx, cy, radius, start_ratio, end_ratio):
+        coords = []
+        steps = 4
+        for i in range(steps + 1):
+            ratio = start_ratio + (end_ratio - start_ratio) * i / steps
+            angle = math.radians(205 - 230 * ratio)
+            coords.extend([
+                cx + radius * math.cos(angle),
+                cy - radius * math.sin(angle),
+            ])
+        return coords
+
+    def _metric_gradient_color(self, ratio):
+        ratio = max(0.0, min(1.0, float(ratio)))
+        stops = [
+            (0.00, (244, 225, 210)),
+            (0.45, (245, 166, 101)),
+            (0.72, (217, 76, 68)),
+            (1.00, (122, 12, 28)),
+        ]
+        for index in range(len(stops) - 1):
+            left_pos, left_color = stops[index]
+            right_pos, right_color = stops[index + 1]
+            if ratio <= right_pos:
+                local = (ratio - left_pos) / (right_pos - left_pos)
+                rgb = [
+                    int(round(left_color[channel] + (right_color[channel] - left_color[channel]) * local))
+                    for channel in range(3)
+                ]
+                return "#{:02x}{:02x}{:02x}".format(*rgb)
+        return "#{:02x}{:02x}{:02x}".format(*stops[-1][1])
+
     def _update_system_metrics(self):
         if self.stop_event.is_set():
             return
@@ -1200,22 +1227,19 @@ class UsageWidget:
     def _animate_metric_gauge(self, gauge):
         target = gauge.get("target")
         if target is None:
-            if gauge["last_text"] != "--":
-                self.canvas.itemconfigure(gauge["value"], text="--")
-                gauge["last_text"] = "--"
             target = 0.0
-        else:
-            text = f"{target:.0f}%"
-            if gauge["last_text"] != text:
-                self.canvas.itemconfigure(gauge["value"], text=text)
-                gauge["last_text"] = text
 
         display = float(gauge.get("display") or 0.0)
         display += (target - display) * 0.25
         if abs(target - display) < 0.15:
             display = target
         gauge["display"] = display
-        self.canvas.itemconfigure(gauge["arc"], extent=-230 * display / 100)
+        visible_segments = int(math.ceil(gauge["segment_count"] * display / 100))
+        if visible_segments != gauge.get("visible_segments"):
+            for index, segment in enumerate(gauge["segments"]):
+                state = "normal" if index < visible_segments else "hidden"
+                self.canvas.itemconfigure(segment, state=state)
+            gauge["visible_segments"] = visible_segments
         x2, y2 = self._gauge_needle_point(gauge, display)
         self.canvas.coords(gauge["needle"], gauge["cx"], gauge["cy"], x2, y2)
 
