@@ -54,10 +54,16 @@ DEFAULT_CONFIG = {
     "widget_height": 50,
     "widget_x": None,
     "widget_y": None,
+    "allow_taskbar_overlap": True,
 }
 
 LEGACY_WIDGET_SIZES = {(286, 78), (286, 50)}
 WIDGET_BG = "#14181b"
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
 
 
 EXTRACT_JS = r"""
@@ -1011,23 +1017,24 @@ class UsageWidget:
         self.root.after(250, self._drain_events)
         self.root.after(300, self._update_system_metrics)
         self.root.after(400, self._animate_metric_gauges)
-        self.root.after(1500, self._keep_window_visible)
+        self.root.after(800, self._keep_window_visible)
 
     def _place_window(self):
         x = self.cfg.get("widget_x")
         y = self.cfg.get("widget_y")
         if x is None or y is None:
-            left, top, right, bottom = self._work_area_for(0, 0)
+            left, top, right, bottom = self._visible_bounds_for(0, 0)
             x = max(left, right - self.w - 8)
-            y = max(top, bottom - self.h - 4)
+            y = max(top, bottom - self.h - 2)
         x, y = self._clamp_window_position(x, y)
         if self.cfg.get("widget_x") != x or self.cfg.get("widget_y") != y:
             self.cfg["widget_x"] = x
             self.cfg["widget_y"] = y
             save_config(self.cfg)
         self.root.geometry(f"{self.w}x{self.h}+{int(x)}+{int(y)}")
+        self._force_topmost()
 
-    def _work_area_for(self, x, y):
+    def _visible_bounds_for(self, x, y):
         try:
             user32 = ctypes.windll.user32
             user32.MonitorFromRect.restype = ctypes.c_void_p
@@ -1037,8 +1044,8 @@ class UsageWidget:
                 info = MONITORINFO()
                 info.cbSize = ctypes.sizeof(MONITORINFO)
                 if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-                    work = info.rcWork
-                    return work.left, work.top, work.right, work.bottom
+                    bounds = info.rcMonitor if self.cfg.get("allow_taskbar_overlap", True) else info.rcWork
+                    return bounds.left, bounds.top, bounds.right, bounds.bottom
         except Exception:
             pass
         return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
@@ -1046,23 +1053,51 @@ class UsageWidget:
     def _clamp_window_position(self, x, y):
         x = int(x)
         y = int(y)
-        left, top, right, bottom = self._work_area_for(x, y)
+        left, top, right, bottom = self._visible_bounds_for(x, y)
         max_x = max(left, right - self.w)
         max_y = max(top, bottom - self.h)
         return min(max(x, left), max_x), min(max(y, top), max_y)
 
+    def _force_topmost(self):
+        try:
+            self.root.attributes("-topmost", True)
+            hwnd = int(self.root.winfo_id())
+            user32 = ctypes.windll.user32
+            user32.SetWindowPos.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            user32.SetWindowPos.restype = ctypes.c_bool
+            user32.SetWindowPos(
+                ctypes.c_void_p(hwnd),
+                ctypes.c_void_p(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+            self.root.lift()
+        except Exception:
+            pass
+
     def _keep_window_visible(self):
         if self.stop_event.is_set():
             return
-        self.root.attributes("-topmost", True)
+        self._force_topmost()
         x, y = self._clamp_window_position(self.root.winfo_x(), self.root.winfo_y())
         if x != self.root.winfo_x() or y != self.root.winfo_y():
             self.root.geometry(f"+{x}+{y}")
             self.cfg["widget_x"] = x
             self.cfg["widget_y"] = y
             save_config(self.cfg)
-        self.root.lift()
-        self.root.after(1500, self._keep_window_visible)
+            self._force_topmost()
+        self.root.after(800, self._keep_window_visible)
 
     def _build_canvas(self):
         c = self.canvas

@@ -11,5 +11,6 @@
   "widget_width": 236,
   "widget_height": 50,
   "widget_x": null,
-  "widget_y": null
+  "widget_y": null,
+  "allow_taskbar_overlap": true
 }
