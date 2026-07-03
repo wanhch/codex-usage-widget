@@ -1012,8 +1012,8 @@ class UsageWidget:
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
             self.bitmap_text = {
-                "cpu_label": c.create_text(33, 30, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "mem_label": c.create_text(78, 30, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "cpu_label": c.create_text(33, 30, text="C", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 9)),
+                "mem_label": c.create_text(78, 30, text="M", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 9)),
                 "five_label": c.create_text(137, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
                 "five_value": c.create_text(137, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
                 "five_reset": c.create_text(137, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
@@ -1033,14 +1033,14 @@ class UsageWidget:
             cx=33,
             cy=30,
             radius=17,
-            label="CPU",
+            label="C",
             color="#ffb86b",
         )
         self.mem_gauge = self._create_metric_gauge(
             cx=78,
             cy=30,
             radius=17,
-            label="MEM",
+            label="M",
             color="#c792ea",
         )
         self.five_ring = self._create_ring(
@@ -1105,7 +1105,7 @@ class UsageWidget:
             text=label,
             anchor="center",
             fill="#d7dee2",
-            font=("Segoe UI Semibold", 7),
+            font=("Segoe UI Semibold", 9),
         )
         return {
             "cx": cx,
