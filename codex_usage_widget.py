@@ -1012,8 +1012,8 @@ class UsageWidget:
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
             self.bitmap_text = {
-                "cpu_label": c.create_text(33, 30, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "mem_label": c.create_text(78, 30, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "cpu_label": c.create_text(33, 43, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "mem_label": c.create_text(78, 43, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
                 "five_label": c.create_text(137, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
                 "five_value": c.create_text(137, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
                 "five_reset": c.create_text(137, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
@@ -1101,7 +1101,7 @@ class UsageWidget:
         hub = self.canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill="#eef2f3", outline="")
         label_id = self.canvas.create_text(
             cx,
-            cy - 3,
+            cy + radius - 4,
             text=label,
             anchor="center",
             fill="#d7dee2",
