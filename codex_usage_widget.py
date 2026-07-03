@@ -23,11 +23,10 @@ import tkinter as tk
 from tkinter import Menu
 
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageTk
+    from PIL import Image, ImageDraw, ImageTk
 except ImportError:
     Image = None
     ImageDraw = None
-    ImageFont = None
     ImageTk = None
 
 
@@ -968,6 +967,8 @@ class UsageWidget:
             "five": {"label": "5h", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
             "week": {"label": "7d", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
         }
+        self.cpu_gauge = self._metric_state()
+        self.mem_gauge = self._metric_state()
 
         self.root = tk.Tk()
         self.root.title("Codex Usage")
@@ -1019,7 +1020,20 @@ class UsageWidget:
         self.close_btn = c.create_text(self.w - 10, 10, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 9), tags=("close",))
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
+            self.bitmap_text = {
+                "cpu_label": c.create_text(42, 46, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 8)),
+                "mem_label": c.create_text(101, 46, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 8)),
+                "five_label": c.create_text(169, 31, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 8)),
+                "five_value": c.create_text(169, 42, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 10)),
+                "five_reset": c.create_text(169, 54, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 7)),
+                "week_label": c.create_text(234, 31, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 8)),
+                "week_value": c.create_text(234, 42, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 10)),
+                "week_reset": c.create_text(234, 54, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 7)),
+            }
             self._render_bitmap_dials()
+            self._sync_bitmap_text()
+            for item in self.bitmap_text.values():
+                c.tag_raise(item)
             c.tag_raise(self.status_dot)
             c.tag_raise(self.close_btn)
             return
@@ -1056,6 +1070,12 @@ class UsageWidget:
             light_color="#14181b",
             timer_color="#238a54",
         )
+
+    def _metric_state(self):
+        return {
+            "target": None,
+            "display": 0.0,
+        }
 
     def _create_metric_gauge(self, cx, cy, radius, label, color):
         box = (cx - radius, cy - radius, cx + radius, cy + radius)
@@ -1123,13 +1143,10 @@ class UsageWidget:
             cy + inner_radius,
         )
         timer_bg = self.canvas.create_oval(*inner_box, fill=light_color, outline="")
-        timer_fill = self.canvas.create_arc(
-            *inner_box,
-            start=90,
-            extent=0,
-            style=tk.PIESLICE,
+        timer_fill = self.canvas.create_polygon(
+            *self._timer_slice_coords(cx, cy, inner_radius, 0),
             fill=timer_color,
-            outline=timer_color,
+            outline="",
         )
         ring = self.canvas.create_line(
             *self._ring_points(cx, cy, radius, 0),
@@ -1167,6 +1184,7 @@ class UsageWidget:
             "cx": cx,
             "cy": cy,
             "radius": radius,
+            "timer_radius": inner_radius,
             "bg": bg,
             "timer_bg": timer_bg,
             "timer_fill": timer_fill,
@@ -1230,49 +1248,44 @@ class UsageWidget:
         image = Image.new("RGBA", (self.w * scale, self.h * scale), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        self._draw_bitmap_gauge(draw, 42, 49, 26, "CPU", self.cpu_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_gauge(draw, 101, 49, 26, "MEM", self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 42, 49, 26, self.cpu_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 101, 49, 26, self.mem_gauge.get("display", 0.0), scale)
         self._draw_bitmap_ring(draw, 169, 42, 24, self.dial_state["five"], "#62c6ff", "#237da3", scale)
         self._draw_bitmap_ring(draw, 234, 42, 24, self.dial_state["week"], "#5be49b", "#238a54", scale)
 
         image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
         self.dial_photo = ImageTk.PhotoImage(image)
         self.canvas.itemconfigure(self.dial_image_id, image=self.dial_photo)
+        self._sync_bitmap_text()
 
-    def _font(self, size, bold=False):
-        weight = "semibold" if bold else "normal"
-        for name in [
-            f"C:/Windows/Fonts/seguisb.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        ]:
-            try:
-                return ImageFont.truetype(name, size * self.dial_scale)
-            except Exception:
-                pass
-        return ImageFont.load_default()
+    def _sync_bitmap_text(self):
+        if not self.use_bitmap_dials or not hasattr(self, "bitmap_text"):
+            return
+        five = self.dial_state["five"]
+        week = self.dial_state["week"]
+        self.canvas.itemconfigure(self.bitmap_text["five_label"], text=five.get("label", "5h"))
+        self.canvas.itemconfigure(self.bitmap_text["five_value"], text=five.get("text", "--"))
+        self.canvas.itemconfigure(self.bitmap_text["five_reset"], text=trim_text(five.get("reset_text", ""), 6))
+        self.canvas.itemconfigure(self.bitmap_text["week_label"], text=week.get("label", "7d"))
+        self.canvas.itemconfigure(self.bitmap_text["week_value"], text=week.get("text", "--"))
+        self.canvas.itemconfigure(self.bitmap_text["week_reset"], text=trim_text(week.get("reset_text", ""), 6))
 
-    def _draw_centered_text(self, draw, xy, text, font, fill):
-        box = draw.textbbox((0, 0), text, font=font)
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        draw.text((xy[0] - width / 2, xy[1] - height / 2 - box[1]), text, font=font, fill=fill)
-
-    def _draw_bitmap_gauge(self, draw, cx, cy, radius, label, percent, scale):
+    def _draw_bitmap_gauge(self, draw, cx, cy, radius, percent, scale):
         cx *= scale
         cy *= scale
         radius *= scale
         percent = max(0.0, min(100.0, float(percent or 0.0)))
-        box = [cx - radius, cy - radius, cx + radius, cy + radius]
-        draw.arc(box, start=205, end=335, fill="#283139", width=4 * scale)
+        width = 4 * scale
+        bg_points = self._bitmap_gauge_arc_points(cx, cy, radius, 0.0, 1.0)
+        self._draw_round_line(draw, bg_points, "#283139", width)
 
         segment_count = 48
         visible_segments = int(math.ceil(segment_count * percent / 100))
         for index in range(visible_segments):
             start_ratio = index / segment_count
             end_ratio = min(1.0, (index + 0.72) / segment_count)
-            start = 205 - 230 * start_ratio
-            end = 205 - 230 * end_ratio
-            draw.arc(box, start=end, end=start, fill=self._metric_gradient_color((index + 1) / segment_count), width=4 * scale)
+            points = self._bitmap_gauge_arc_points(cx, cy, radius, start_ratio, end_ratio)
+            self._draw_round_line(draw, points, self._metric_gradient_color((index + 1) / segment_count), width)
 
         angle = math.radians(205 - 230 * percent / 100)
         length = radius - 8 * scale
@@ -1281,7 +1294,6 @@ class UsageWidget:
         draw.line([cx, cy, x2, y2], fill="#eef2f3", width=2 * scale)
         hub = 3 * scale
         draw.ellipse([cx - hub, cy - hub, cx + hub, cy + hub], fill="#eef2f3")
-        self._draw_centered_text(draw, (cx, cy - 3 * scale), label, self._font(8, True), "#d7dee2")
 
     def _draw_bitmap_ring(self, draw, cx, cy, radius, state, color, timer_color, scale):
         cx *= scale
@@ -1295,7 +1307,10 @@ class UsageWidget:
         reset_fraction = state.get("reset_fraction")
         if reset_fraction is not None:
             reset_fraction = max(0.0, min(1.0, float(reset_fraction)))
-            draw.pieslice(inner_box, start=90, end=90 - 359.9 * reset_fraction, fill=timer_color)
+            if reset_fraction >= 0.999:
+                draw.ellipse(inner_box, fill=timer_color)
+            elif reset_fraction > 0:
+                draw.polygon(self._timer_slice_points(cx, cy, inner_radius, reset_fraction), fill=timer_color)
 
         draw.arc(outer_box, start=0, end=360, fill="#273038", width=5 * scale)
         percent = state.get("percent")
@@ -1303,12 +1318,11 @@ class UsageWidget:
             percent = max(0.0, min(100.0, float(percent)))
             self._draw_round_arc(draw, cx, cy, radius, 0, percent, color, 5 * scale)
 
-        self._draw_centered_text(draw, (cx, cy - 11 * scale), state.get("label", ""), self._font(8, True), "#d9edf5")
-        self._draw_centered_text(draw, (cx, cy), state.get("text", "--"), self._font(10, True), "#ffffff")
-        self._draw_centered_text(draw, (cx, cy + 12 * scale), trim_text(state.get("reset_text", ""), 6), self._font(7, True), "#d6e3e8")
-
     def _draw_round_arc(self, draw, cx, cy, radius, start_percent, end_percent, fill, width):
         points = self._arc_points(cx, cy, radius, start_percent, end_percent)
+        self._draw_round_line(draw, points, fill, width)
+
+    def _draw_round_line(self, draw, points, fill, width):
         if len(points) >= 2:
             draw.line(points, fill=fill, width=width, joint="curve")
             cap_radius = width / 2
@@ -1326,6 +1340,38 @@ class UsageWidget:
         for i in range(steps + 1):
             percent = start_percent + (end_percent - start_percent) * i / steps
             angle = math.radians(90 - 360 * percent / 100)
+            points.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+        return points
+
+    def _timer_slice_coords(self, cx, cy, radius, fraction):
+        coords = []
+        for x, y in self._timer_slice_points(cx, cy, radius, fraction):
+            coords.extend([x, y])
+        return coords
+
+    def _timer_slice_points(self, cx, cy, radius, fraction):
+        fraction = max(0.0, min(1.0, float(fraction or 0.0)))
+        if fraction <= 0:
+            return [(cx, cy), (cx, cy), (cx, cy)]
+        steps = max(4, int(120 * fraction))
+        points = [(cx, cy)]
+        for i in range(steps + 1):
+            progress = fraction * i / steps
+            angle = math.radians(90 - 360 * progress)
+            points.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+        return points
+
+    def _bitmap_gauge_arc_points(self, cx, cy, radius, start_ratio, end_ratio):
+        start_ratio = max(0.0, min(1.0, float(start_ratio)))
+        end_ratio = max(0.0, min(1.0, float(end_ratio)))
+        if end_ratio <= start_ratio:
+            angle = math.radians(205 - 230 * start_ratio)
+            return [(cx + radius * math.cos(angle), cy - radius * math.sin(angle))]
+        steps = max(5, int(96 * (end_ratio - start_ratio)))
+        points = []
+        for i in range(steps + 1):
+            ratio = start_ratio + (end_ratio - start_ratio) * i / steps
+            angle = math.radians(205 - 230 * ratio)
             points.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
         return points
 
@@ -1520,9 +1566,9 @@ class UsageWidget:
 
     def _set_period(self, key, data):
         if key == "five":
-            ring, color = self.five_ring, "#62c6ff"
+            ring, color = (None if self.use_bitmap_dials else self.five_ring), "#62c6ff"
         else:
-            ring, color = self.week_ring, "#5be49b"
+            ring, color = (None if self.use_bitmap_dials else self.week_ring), "#5be49b"
         pct = data.get("percent")
         if pct is None:
             text = self._compact_status_text(data.get("value", ""))
@@ -1550,11 +1596,13 @@ class UsageWidget:
         self.canvas.itemconfigure(ring["value"], text=text)
 
         if reset_fraction is None:
-            reset_extent = 0
+            reset_fraction = 0
         else:
             reset_fraction = max(0, min(1, float(reset_fraction)))
-            reset_extent = -359.9 * reset_fraction
-        self.canvas.itemconfigure(ring["timer_fill"], extent=reset_extent)
+        self.canvas.coords(
+            ring["timer_fill"],
+            *self._timer_slice_coords(ring["cx"], ring["cy"], ring["timer_radius"], reset_fraction),
+        )
         self.canvas.itemconfigure(ring["reset"], text=trim_text(reset_text, 6))
 
     def _compact_status_text(self, value):
