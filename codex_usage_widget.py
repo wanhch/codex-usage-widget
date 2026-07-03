@@ -856,6 +856,24 @@ class FILETIME(ctypes.Structure):
     ]
 
 
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
 class MEMORYSTATUSEX(ctypes.Structure):
     _fields_ = [
         ("dwLength", ctypes.c_uint32),
@@ -993,16 +1011,58 @@ class UsageWidget:
         self.root.after(250, self._drain_events)
         self.root.after(300, self._update_system_metrics)
         self.root.after(400, self._animate_metric_gauges)
+        self.root.after(1500, self._keep_window_visible)
 
     def _place_window(self):
         x = self.cfg.get("widget_x")
         y = self.cfg.get("widget_y")
         if x is None or y is None:
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            x = max(0, sw - self.w - 18)
-            y = max(0, sh - self.h - 56)
+            left, top, right, bottom = self._work_area_for(0, 0)
+            x = max(left, right - self.w - 8)
+            y = max(top, bottom - self.h - 4)
+        x, y = self._clamp_window_position(x, y)
+        if self.cfg.get("widget_x") != x or self.cfg.get("widget_y") != y:
+            self.cfg["widget_x"] = x
+            self.cfg["widget_y"] = y
+            save_config(self.cfg)
         self.root.geometry(f"{self.w}x{self.h}+{int(x)}+{int(y)}")
+
+    def _work_area_for(self, x, y):
+        try:
+            user32 = ctypes.windll.user32
+            user32.MonitorFromRect.restype = ctypes.c_void_p
+            rect = RECT(int(x), int(y), int(x) + self.w, int(y) + self.h)
+            monitor = user32.MonitorFromRect(ctypes.byref(rect), 2)
+            if monitor:
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(MONITORINFO)
+                if user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                    work = info.rcWork
+                    return work.left, work.top, work.right, work.bottom
+        except Exception:
+            pass
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _clamp_window_position(self, x, y):
+        x = int(x)
+        y = int(y)
+        left, top, right, bottom = self._work_area_for(x, y)
+        max_x = max(left, right - self.w)
+        max_y = max(top, bottom - self.h)
+        return min(max(x, left), max_x), min(max(y, top), max_y)
+
+    def _keep_window_visible(self):
+        if self.stop_event.is_set():
+            return
+        self.root.attributes("-topmost", True)
+        x, y = self._clamp_window_position(self.root.winfo_x(), self.root.winfo_y())
+        if x != self.root.winfo_x() or y != self.root.winfo_y():
+            self.root.geometry(f"+{x}+{y}")
+            self.cfg["widget_x"] = x
+            self.cfg["widget_y"] = y
+            save_config(self.cfg)
+        self.root.lift()
+        self.root.after(1500, self._keep_window_visible)
 
     def _build_canvas(self):
         c = self.canvas
@@ -1455,14 +1515,17 @@ class UsageWidget:
         sx, sy, wx, wy = self.drag
         nx = wx + (event.x_root - sx)
         ny = wy + (event.y_root - sy)
+        nx, ny = self._clamp_window_position(nx, ny)
         self.root.geometry(f"+{nx}+{ny}")
 
     def _end_drag(self, event):
         if not self.drag:
             return
         self.drag = None
-        self.cfg["widget_x"] = self.root.winfo_x()
-        self.cfg["widget_y"] = self.root.winfo_y()
+        x, y = self._clamp_window_position(self.root.winfo_x(), self.root.winfo_y())
+        self.root.geometry(f"+{x}+{y}")
+        self.cfg["widget_x"] = x
+        self.cfg["widget_y"] = y
         save_config(self.cfg)
 
     def _start_worker(self):
