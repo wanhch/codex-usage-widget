@@ -41,8 +41,9 @@ DEFAULT_CONFIG = {
     "browser_mode": "visible",
     "minimize_edge_after_data": True,
     "close_edge_on_exit": True,
-    "widget_width": 150,
-    "widget_height": 72,
+    "system_poll_seconds": 1,
+    "widget_width": 286,
+    "widget_height": 78,
     "widget_x": None,
     "widget_y": None,
 }
@@ -855,6 +856,86 @@ def rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
     return canvas.create_polygon(points, smooth=True, **kwargs)
 
 
+class FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_uint32),
+        ("dwHighDateTime", ctypes.c_uint32),
+    ]
+
+
+class MEMORYSTATUSEX(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_uint32),
+        ("dwMemoryLoad", ctypes.c_uint32),
+        ("ullTotalPhys", ctypes.c_uint64),
+        ("ullAvailPhys", ctypes.c_uint64),
+        ("ullTotalPageFile", ctypes.c_uint64),
+        ("ullAvailPageFile", ctypes.c_uint64),
+        ("ullTotalVirtual", ctypes.c_uint64),
+        ("ullAvailVirtual", ctypes.c_uint64),
+        ("ullAvailExtendedVirtual", ctypes.c_uint64),
+    ]
+
+
+def filetime_to_int(filetime):
+    return (filetime.dwHighDateTime << 32) | filetime.dwLowDateTime
+
+
+class SystemSampler:
+    def __init__(self):
+        self.last_idle = None
+        self.last_kernel = None
+        self.last_user = None
+
+    def sample(self):
+        return {
+            "cpu": self.cpu_percent(),
+            "memory": self.memory_percent(),
+        }
+
+    def cpu_percent(self):
+        idle = FILETIME()
+        kernel = FILETIME()
+        user = FILETIME()
+        ok = ctypes.windll.kernel32.GetSystemTimes(
+            ctypes.byref(idle),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        )
+        if not ok:
+            return None
+
+        idle_value = filetime_to_int(idle)
+        kernel_value = filetime_to_int(kernel)
+        user_value = filetime_to_int(user)
+        if self.last_idle is None:
+            self.last_idle = idle_value
+            self.last_kernel = kernel_value
+            self.last_user = user_value
+            return None
+
+        idle_delta = idle_value - self.last_idle
+        kernel_delta = kernel_value - self.last_kernel
+        user_delta = user_value - self.last_user
+        self.last_idle = idle_value
+        self.last_kernel = kernel_value
+        self.last_user = user_value
+
+        total = kernel_delta + user_delta
+        if total <= 0:
+            return None
+        busy = max(0, total - idle_delta)
+        return max(0.0, min(100.0, busy * 100.0 / total))
+
+    def memory_percent(self):
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+        if not ok:
+            return None
+        return float(status.dwMemoryLoad)
+
+
 class UsageWidget:
     def __init__(self):
         try:
@@ -869,6 +950,7 @@ class UsageWidget:
         self.edge_minimized = False
         self.drag = None
         self.last = None
+        self.system_sampler = SystemSampler()
 
         self.root = tk.Tk()
         self.root.title("Codex Usage")
@@ -879,7 +961,7 @@ class UsageWidget:
 
         self.w = int(self.cfg.get("widget_width") or DEFAULT_CONFIG["widget_width"])
         self.h = int(self.cfg.get("widget_height") or DEFAULT_CONFIG["widget_height"])
-        if self.w > 220 or self.h > 110:
+        if self.w < DEFAULT_CONFIG["widget_width"] or self.h < DEFAULT_CONFIG["widget_height"] or self.w > 420 or self.h > 150:
             self.w = DEFAULT_CONFIG["widget_width"]
             self.h = DEFAULT_CONFIG["widget_height"]
             self.cfg["widget_width"] = self.w
@@ -900,6 +982,7 @@ class UsageWidget:
         self._bind_events()
         self._start_worker()
         self.root.after(250, self._drain_events)
+        self.root.after(300, self._update_system_metrics)
 
     def _place_window(self):
         x = self.cfg.get("widget_x")
@@ -917,9 +1000,23 @@ class UsageWidget:
         self.status_dot = c.create_oval(7, 6, 14, 13, fill="#f6c177", outline="")
         self.close_btn = c.create_text(self.w - 10, 10, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 9), tags=("close",))
 
+        self.cpu_gauge = self._create_metric_gauge(
+            cx=42,
+            cy=49,
+            radius=26,
+            label="CPU",
+            color="#ffb86b",
+        )
+        self.mem_gauge = self._create_metric_gauge(
+            cx=101,
+            cy=49,
+            radius=26,
+            label="MEM",
+            color="#c792ea",
+        )
         self.five_ring = self._create_ring(
-            cx=43,
-            cy=40,
+            cx=169,
+            cy=42,
             radius=24,
             label="5h",
             color="#62c6ff",
@@ -927,14 +1024,71 @@ class UsageWidget:
             timer_color="#237da3",
         )
         self.week_ring = self._create_ring(
-            cx=107,
-            cy=40,
+            cx=234,
+            cy=42,
             radius=24,
             label="7d",
             color="#5be49b",
             light_color="#14181b",
             timer_color="#238a54",
         )
+
+    def _create_metric_gauge(self, cx, cy, radius, label, color):
+        box = (cx - radius, cy - radius, cx + radius, cy + radius)
+        bg = self.canvas.create_arc(
+            *box,
+            start=205,
+            extent=-230,
+            style="arc",
+            outline="#283139",
+            width=4,
+        )
+        arc = self.canvas.create_arc(
+            *box,
+            start=205,
+            extent=0,
+            style="arc",
+            outline=color,
+            width=4,
+        )
+        needle = self.canvas.create_line(
+            cx,
+            cy,
+            cx,
+            cy - radius + 7,
+            fill="#eef2f3",
+            width=2,
+            capstyle=tk.ROUND,
+        )
+        hub = self.canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill="#eef2f3", outline="")
+        label_id = self.canvas.create_text(
+            cx,
+            cy - 3,
+            text=label,
+            anchor="center",
+            fill="#9aa7af",
+            font=("Segoe UI Semibold", 7),
+        )
+        value_id = self.canvas.create_text(
+            cx,
+            cy + 15,
+            text="--",
+            anchor="center",
+            fill="#ffffff",
+            font=("Segoe UI Semibold", 9),
+        )
+        return {
+            "cx": cx,
+            "cy": cy,
+            "radius": radius,
+            "color": color,
+            "bg": bg,
+            "arc": arc,
+            "needle": needle,
+            "hub": hub,
+            "label": label_id,
+            "value": value_id,
+        }
 
     def _create_ring(self, cx, cy, radius, label, color, light_color, timer_color):
         box = (cx - radius, cy - radius, cx + radius, cy + radius)
@@ -1014,6 +1168,36 @@ class UsageWidget:
                 cy - radius * math.sin(angle),
             ])
         return coords
+
+    def _update_system_metrics(self):
+        if self.stop_event.is_set():
+            return
+        sample = self.system_sampler.sample()
+        self._set_metric_gauge(self.cpu_gauge, sample.get("cpu"))
+        self._set_metric_gauge(self.mem_gauge, sample.get("memory"))
+        interval = max(1, int(self.cfg.get("system_poll_seconds") or 1))
+        self.root.after(interval * 1000, self._update_system_metrics)
+
+    def _set_metric_gauge(self, gauge, percent):
+        if percent is None:
+            self.canvas.itemconfigure(gauge["value"], text="--")
+            self.canvas.itemconfigure(gauge["arc"], extent=0)
+            x2, y2 = self._gauge_needle_point(gauge, 0)
+        else:
+            percent = max(0.0, min(100.0, float(percent)))
+            self.canvas.itemconfigure(gauge["value"], text=f"{percent:.0f}%")
+            self.canvas.itemconfigure(gauge["arc"], extent=-230 * percent / 100)
+            x2, y2 = self._gauge_needle_point(gauge, percent)
+        self.canvas.coords(gauge["needle"], gauge["cx"], gauge["cy"], x2, y2)
+
+    def _gauge_needle_point(self, gauge, percent):
+        percent = max(0.0, min(100.0, float(percent or 0)))
+        angle = math.radians(205 - 230 * percent / 100)
+        length = gauge["radius"] - 8
+        return (
+            gauge["cx"] + length * math.cos(angle),
+            gauge["cy"] - length * math.sin(angle),
+        )
 
     def _build_menu(self):
         self.menu = Menu(self.root, tearoff=0)

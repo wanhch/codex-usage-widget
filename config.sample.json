@@ -6,8 +6,9 @@
   "browser_mode": "visible",
   "minimize_edge_after_data": true,
   "close_edge_on_exit": true,
-  "widget_width": 150,
-  "widget_height": 72,
+  "system_poll_seconds": 1,
+  "widget_width": 286,
+  "widget_height": 78,
   "widget_x": null,
   "widget_y": null
 }
