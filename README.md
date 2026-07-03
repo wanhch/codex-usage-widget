@@ -7,9 +7,9 @@ https://chatgpt.com/codex/cloud/settings/analytics#usage
 ## 使用
 
 1. 双击 `Start-CodexUsageWidget.cmd`。
-2. 默认不会显示 Edge 窗口。程序会用隐藏的完整 Edge 采集数据；首次登录或登录失效时，双击小窗或右键选择 `Open collector page`，在打开的独立 Edge 窗口里登录 ChatGPT。
+2. 默认会打开一个独立 Edge 采集窗口。首次登录或登录失效时，请在这个窗口里登录 ChatGPT；也可以双击小窗或右键选择 `Open collector page` 重新打开采集页。
 3. 小窗每 30 秒读取一次页面文本，显示 5h 和 7d 百分比；圆内浅色底色会按 reset 剩余时间显示成小秒表效果。
-4. 登录后关闭可见 Edge，下一次启动会继续用后台 Edge 采集。
+4. 成功读到数据后，采集用的 Edge 窗口会按配置自动最小化。
 
 ## 操作
 
@@ -23,7 +23,7 @@ https://chatgpt.com/codex/cloud/settings/analytics#usage
 配置文件是 `config.json`。常用项：
 
 - `poll_seconds`: 默认 `30`。
-- `browser_mode`: 默认 `hidden`，使用完整 Edge 但窗口放到屏幕外并最小化。`headless` 更轻但可能被页面校验拦截；`visible` 会恢复旧的可见采集窗口。
+- `browser_mode`: 默认 `visible`，使用可见的独立 Edge 采集窗口。`hidden` 会把完整 Edge 放到屏幕外并最小化；`headless` 更轻但可能被页面校验拦截。
 - `refresh_page_each_poll`: 默认 `false`。如果页面不会自己更新，把它改成 `true`，程序会每轮轮询刷新页面，网络和 CPU 占用会稍高。
 - `minimize_edge_after_data`: 默认 `true`。
 - `close_edge_on_exit`: 默认 `true`。

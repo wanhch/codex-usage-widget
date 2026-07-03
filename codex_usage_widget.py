@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
     "remote_debugging_port": 39225,
     "refresh_page_each_poll": False,
     "reload_wait_seconds": 4,
-    "browser_mode": "hidden",
+    "browser_mode": "visible",
     "minimize_edge_after_data": True,
     "close_edge_on_exit": True,
     "widget_width": 150,
@@ -214,7 +214,12 @@ def ensure_browser(cfg):
     deadline = time.time() + 18
     while time.time() < deadline:
         if is_cdp_ready(port):
-            if mode == "hidden":
+            if mode == "visible":
+                try:
+                    focus_visible_collector(port)
+                except Exception as exc:
+                    log(f"focus visible collector failed: {exc}")
+            elif mode == "hidden":
                 minimize_collector(port)
             return port
         time.sleep(0.4)
@@ -1158,7 +1163,7 @@ class UsageWidget:
             pct = max(0, min(100, float(pct)))
             text = f"{pct:.0f}%"
             progress = pct
-            fill = "#ff6b6b" if pct >= 90 else "#f6c177" if pct >= 70 else color
+            fill = color
         self.canvas.coords(
             ring["ring"],
             *self._ring_points(ring["cx"], ring["cy"], ring["radius"], progress),
