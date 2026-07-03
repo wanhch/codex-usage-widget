@@ -1,6 +1,6 @@
 # Codex Usage Widget
 
-一个轻量的 Windows 置顶小窗，左侧显示 CPU/内存小仪表盘，右侧用两个圆形进度环显示 5 小时和 7 天 Codex 用量，并在圆内显示 reset 倒计时。CPU/内存仪表盘不显示数字，已占用弧段会从浅色逐步过渡到深红。Codex 数据通过独立 Edge 配置读取：
+一个轻量的 Windows 置顶小窗，左侧显示 CPU/内存小仪表盘，右侧用两个圆形进度环显示 5 小时和 7 天 Codex 用量，并在圆内显示 reset 倒计时。仪表盘优先用高分辨率离屏位图绘制以改善圆形抗锯齿；CPU/内存仪表盘不显示数字，已占用弧段会从浅色逐步过渡到深红。Codex 数据通过独立 Edge 配置读取：
 
 https://chatgpt.com/codex/cloud/settings/analytics#usage
 

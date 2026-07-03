@@ -53,6 +53,7 @@ try {
             --windowed `
             --onedir `
             --name CodexUsageWidget `
+            --exclude-module numpy `
             codex_usage_widget.py
 
         if ($LASTEXITCODE -ne 0) {

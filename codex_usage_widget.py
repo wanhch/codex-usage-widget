@@ -22,6 +22,14 @@ from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import Menu
 
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageTk
+except ImportError:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    ImageTk = None
+
 
 TARGET_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage"
 if getattr(sys, "frozen", False):
@@ -952,6 +960,14 @@ class UsageWidget:
         self.drag = None
         self.last = None
         self.system_sampler = SystemSampler()
+        self.use_bitmap_dials = Image is not None and ImageTk is not None
+        self.dial_scale = 4
+        self.dial_photo = None
+        self.dial_image_id = None
+        self.dial_state = {
+            "five": {"label": "5h", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+            "week": {"label": "7d", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+        }
 
         self.root = tk.Tk()
         self.root.title("Codex Usage")
@@ -1001,6 +1017,12 @@ class UsageWidget:
         self.bg = rounded_rect(c, 1, 1, self.w - 1, self.h - 1, 8, fill="#14181b", outline="#2b3238")
         self.status_dot = c.create_oval(7, 6, 14, 13, fill="#f6c177", outline="")
         self.close_btn = c.create_text(self.w - 10, 10, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 9), tags=("close",))
+        if self.use_bitmap_dials:
+            self.dial_image_id = c.create_image(0, 0, anchor="nw")
+            self._render_bitmap_dials()
+            c.tag_raise(self.status_dot)
+            c.tag_raise(self.close_btn)
+            return
 
         self.cpu_gauge = self._create_metric_gauge(
             cx=42,
@@ -1201,6 +1223,112 @@ class UsageWidget:
                 return "#{:02x}{:02x}{:02x}".format(*rgb)
         return "#{:02x}{:02x}{:02x}".format(*stops[-1][1])
 
+    def _render_bitmap_dials(self):
+        if not self.use_bitmap_dials:
+            return
+        scale = self.dial_scale
+        image = Image.new("RGBA", (self.w * scale, self.h * scale), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+
+        self._draw_bitmap_gauge(draw, 42, 49, 26, "CPU", self.cpu_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 101, 49, 26, "MEM", self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_ring(draw, 169, 42, 24, self.dial_state["five"], "#62c6ff", "#237da3", scale)
+        self._draw_bitmap_ring(draw, 234, 42, 24, self.dial_state["week"], "#5be49b", "#238a54", scale)
+
+        image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
+        self.dial_photo = ImageTk.PhotoImage(image)
+        self.canvas.itemconfigure(self.dial_image_id, image=self.dial_photo)
+
+    def _font(self, size, bold=False):
+        weight = "semibold" if bold else "normal"
+        for name in [
+            f"C:/Windows/Fonts/seguisb.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(name, size * self.dial_scale)
+            except Exception:
+                pass
+        return ImageFont.load_default()
+
+    def _draw_centered_text(self, draw, xy, text, font, fill):
+        box = draw.textbbox((0, 0), text, font=font)
+        width = box[2] - box[0]
+        height = box[3] - box[1]
+        draw.text((xy[0] - width / 2, xy[1] - height / 2 - box[1]), text, font=font, fill=fill)
+
+    def _draw_bitmap_gauge(self, draw, cx, cy, radius, label, percent, scale):
+        cx *= scale
+        cy *= scale
+        radius *= scale
+        percent = max(0.0, min(100.0, float(percent or 0.0)))
+        box = [cx - radius, cy - radius, cx + radius, cy + radius]
+        draw.arc(box, start=205, end=335, fill="#283139", width=4 * scale)
+
+        segment_count = 48
+        visible_segments = int(math.ceil(segment_count * percent / 100))
+        for index in range(visible_segments):
+            start_ratio = index / segment_count
+            end_ratio = min(1.0, (index + 0.72) / segment_count)
+            start = 205 - 230 * start_ratio
+            end = 205 - 230 * end_ratio
+            draw.arc(box, start=end, end=start, fill=self._metric_gradient_color((index + 1) / segment_count), width=4 * scale)
+
+        angle = math.radians(205 - 230 * percent / 100)
+        length = radius - 8 * scale
+        x2 = cx + length * math.cos(angle)
+        y2 = cy - length * math.sin(angle)
+        draw.line([cx, cy, x2, y2], fill="#eef2f3", width=2 * scale)
+        hub = 3 * scale
+        draw.ellipse([cx - hub, cy - hub, cx + hub, cy + hub], fill="#eef2f3")
+        self._draw_centered_text(draw, (cx, cy - 3 * scale), label, self._font(8, True), "#d7dee2")
+
+    def _draw_bitmap_ring(self, draw, cx, cy, radius, state, color, timer_color, scale):
+        cx *= scale
+        cy *= scale
+        radius *= scale
+        inner_radius = radius - 8 * scale
+        outer_box = [cx - radius, cy - radius, cx + radius, cy + radius]
+        inner_box = [cx - inner_radius, cy - inner_radius, cx + inner_radius, cy + inner_radius]
+        draw.ellipse(inner_box, fill="#14181b")
+
+        reset_fraction = state.get("reset_fraction")
+        if reset_fraction is not None:
+            reset_fraction = max(0.0, min(1.0, float(reset_fraction)))
+            draw.pieslice(inner_box, start=90, end=90 - 359.9 * reset_fraction, fill=timer_color)
+
+        draw.arc(outer_box, start=0, end=360, fill="#273038", width=5 * scale)
+        percent = state.get("percent")
+        if percent is not None:
+            percent = max(0.0, min(100.0, float(percent)))
+            self._draw_round_arc(draw, cx, cy, radius, 0, percent, color, 5 * scale)
+
+        self._draw_centered_text(draw, (cx, cy - 11 * scale), state.get("label", ""), self._font(8, True), "#d9edf5")
+        self._draw_centered_text(draw, (cx, cy), state.get("text", "--"), self._font(10, True), "#ffffff")
+        self._draw_centered_text(draw, (cx, cy + 12 * scale), trim_text(state.get("reset_text", ""), 6), self._font(7, True), "#d6e3e8")
+
+    def _draw_round_arc(self, draw, cx, cy, radius, start_percent, end_percent, fill, width):
+        points = self._arc_points(cx, cy, radius, start_percent, end_percent)
+        if len(points) >= 2:
+            draw.line(points, fill=fill, width=width, joint="curve")
+            cap_radius = width / 2
+            for x, y in (points[0], points[-1]):
+                draw.ellipse([x - cap_radius, y - cap_radius, x + cap_radius, y + cap_radius], fill=fill)
+
+    def _arc_points(self, cx, cy, radius, start_percent, end_percent):
+        start_percent = max(0.0, min(100.0, float(start_percent)))
+        end_percent = max(0.0, min(100.0, float(end_percent)))
+        if end_percent <= start_percent:
+            angle = math.radians(90 - 360 * start_percent / 100)
+            return [(cx + radius * math.cos(angle), cy - radius * math.sin(angle))]
+        steps = max(6, int(120 * (end_percent - start_percent) / 100))
+        points = []
+        for i in range(steps + 1):
+            percent = start_percent + (end_percent - start_percent) * i / steps
+            angle = math.radians(90 - 360 * percent / 100)
+            points.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+        return points
+
     def _update_system_metrics(self):
         if self.stop_event.is_set():
             return
@@ -1221,6 +1349,8 @@ class UsageWidget:
             return
         self._animate_metric_gauge(self.cpu_gauge)
         self._animate_metric_gauge(self.mem_gauge)
+        if self.use_bitmap_dials:
+            self._render_bitmap_dials()
         delay = max(50, int(self.cfg.get("gauge_animation_ms") or 100))
         self.root.after(delay, self._animate_metric_gauges)
 
@@ -1234,6 +1364,8 @@ class UsageWidget:
         if abs(target - display) < 0.15:
             display = target
         gauge["display"] = display
+        if self.use_bitmap_dials:
+            return
         visible_segments = int(math.ceil(gauge["segment_count"] * display / 100))
         if visible_segments != gauge.get("visible_segments"):
             for index, segment in enumerate(gauge["segments"]):
@@ -1401,6 +1533,15 @@ class UsageWidget:
             text = f"{pct:.0f}%"
             progress = pct
             fill = color
+        reset_fraction = data.get("reset_fraction")
+        reset_text = data.get("reset_text", "")
+        if self.use_bitmap_dials:
+            self.dial_state[key]["percent"] = pct if pct is not None else None
+            self.dial_state[key]["text"] = text
+            self.dial_state[key]["reset_text"] = reset_text
+            self.dial_state[key]["reset_fraction"] = reset_fraction
+            self._render_bitmap_dials()
+            return
         self.canvas.coords(
             ring["ring"],
             *self._ring_points(ring["cx"], ring["cy"], ring["radius"], progress),
@@ -1408,8 +1549,6 @@ class UsageWidget:
         self.canvas.itemconfigure(ring["ring"], fill=fill)
         self.canvas.itemconfigure(ring["value"], text=text)
 
-        reset_fraction = data.get("reset_fraction")
-        reset_text = data.get("reset_text", "")
         if reset_fraction is None:
             reset_extent = 0
         else:
