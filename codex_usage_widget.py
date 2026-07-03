@@ -1184,9 +1184,9 @@ class UsageWidget:
     def _metric_gradient_color(self, ratio):
         ratio = max(0.0, min(1.0, float(ratio)))
         stops = [
-            (0.00, (244, 225, 210)),
-            (0.45, (245, 166, 101)),
-            (0.72, (217, 76, 68)),
+            (0.00, (248, 196, 138)),
+            (0.55, (248, 196, 138)),
+            (0.80, (221, 80, 68)),
             (1.00, (122, 12, 28)),
         ]
         for index in range(len(stops) - 1):
