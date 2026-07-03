@@ -50,13 +50,13 @@ DEFAULT_CONFIG = {
     "close_edge_on_exit": True,
     "system_poll_seconds": 1,
     "gauge_animation_ms": 100,
-    "widget_width": 286,
+    "widget_width": 236,
     "widget_height": 50,
     "widget_x": None,
     "widget_y": None,
 }
 
-LEGACY_WIDGET_SIZES = {(286, 78)}
+LEGACY_WIDGET_SIZES = {(286, 78), (286, 50)}
 WIDGET_BG = "#14181b"
 
 
@@ -970,7 +970,7 @@ class UsageWidget:
             self.cfg["widget_width"] = self.w
             self.cfg["widget_height"] = self.h
             save_config(self.cfg)
-        elif self.w < 240 or self.h < 46 or self.w > 420 or self.h > 150:
+        elif self.w < 220 or self.h < 46 or self.w > 420 or self.h > 150:
             self.w = DEFAULT_CONFIG["widget_width"]
             self.h = DEFAULT_CONFIG["widget_height"]
             self.cfg["widget_width"] = self.w
@@ -1012,14 +1012,14 @@ class UsageWidget:
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
             self.bitmap_text = {
-                "cpu_label": c.create_text(38, 30, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "mem_label": c.create_text(91, 30, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "five_label": c.create_text(164, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
-                "five_value": c.create_text(164, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                "five_reset": c.create_text(164, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
-                "week_label": c.create_text(229, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
-                "week_value": c.create_text(229, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                "week_reset": c.create_text(229, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                "cpu_label": c.create_text(33, 30, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "mem_label": c.create_text(78, 30, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
+                "five_label": c.create_text(137, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
+                "five_value": c.create_text(137, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                "five_reset": c.create_text(137, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                "week_label": c.create_text(190, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
+                "week_value": c.create_text(190, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                "week_reset": c.create_text(190, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
             }
             self._render_bitmap_dials()
             self._sync_bitmap_text()
@@ -1030,21 +1030,21 @@ class UsageWidget:
             return
 
         self.cpu_gauge = self._create_metric_gauge(
-            cx=38,
+            cx=33,
             cy=30,
             radius=17,
             label="CPU",
             color="#ffb86b",
         )
         self.mem_gauge = self._create_metric_gauge(
-            cx=91,
+            cx=78,
             cy=30,
             radius=17,
             label="MEM",
             color="#c792ea",
         )
         self.five_ring = self._create_ring(
-            cx=164,
+            cx=137,
             cy=26,
             radius=18,
             label="5h",
@@ -1053,7 +1053,7 @@ class UsageWidget:
             timer_color="#237da3",
         )
         self.week_ring = self._create_ring(
-            cx=229,
+            cx=190,
             cy=26,
             radius=18,
             label="7d",
@@ -1239,10 +1239,10 @@ class UsageWidget:
         image = Image.new("RGBA", (self.w * scale, self.h * scale), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        self._draw_bitmap_gauge(draw, 38, 30, 17, self.cpu_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_gauge(draw, 91, 30, 17, self.mem_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_ring(draw, 164, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
-        self._draw_bitmap_ring(draw, 229, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
+        self._draw_bitmap_gauge(draw, 33, 30, 17, self.cpu_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 78, 30, 17, self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_ring(draw, 137, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
+        self._draw_bitmap_ring(draw, 190, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
 
         image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
         self.dial_photo = ImageTk.PhotoImage(image)
