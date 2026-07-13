@@ -70,30 +70,23 @@ EXTRACT_JS = r"""
 (() => {
   const bodyText = document.body ? document.body.innerText : "";
   const lines = bodyText.split(/\n+/).map(s => s.trim()).filter(Boolean);
-  const hit = /(codex|usage|limit|5\s*[- ]?\s*h(?:our)?s?|weekly|week|remaining|reset|用量|限额|限制|小时|小時|一周|每周|每週|周|週)/i;
-  const picked = [];
+  const hit = /(codex|usage|limit|session|5\s*[- ]?\s*h(?:our)?s?|weekly|week|remaining|reset|用量|限额|限制|小时|小時|一周|每周|每週|周|週)/i;
+  const chunks = [];
+  const seenChunks = new Set();
   for (let i = 0; i < lines.length; i++) {
     if (!hit.test(lines[i])) continue;
-    for (let j = Math.max(0, i - 3); j < Math.min(lines.length, i + 7); j++) {
-      picked.push(lines[j]);
-    }
-    picked.push("---");
-  }
-  const uniq = [];
-  const seen = new Set();
-  for (const line of picked) {
-    const key = line.slice(0, 260);
-    if (!seen.has(key)) {
-      seen.add(key);
-      uniq.push(key);
-    }
+    const chunk = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 7));
+    const key = chunk.join("\n").slice(0, 1800);
+    if (seenChunks.has(key)) continue;
+    seenChunks.add(key);
+    chunks.push(...chunk, "---");
   }
   return {
     url: location.href,
     title: document.title,
     readyState: document.readyState,
     text: bodyText.slice(0, 120000),
-    focusedText: uniq.slice(0, 260).join("\n"),
+    focusedText: chunks.slice(0, 520).join("\n"),
     capturedAt: new Date().toISOString()
   };
 })();
@@ -685,14 +678,12 @@ def format_reset_minutes(minutes):
 
 
 def parse_capture(capture):
-    text = (capture.get("focusedText") or "").strip()
+    focused_text = (capture.get("focusedText") or "").strip()
     full_text = capture.get("text") or ""
-    if len(text) < 60:
-        text = full_text
-    lines = normalize_lines(text)
     five_patterns = [
         r"\b5\s*[- ]?\s*h(?:our)?s?\b",
         r"\bfive\s*[- ]?\s*hour",
+        r"\bsession(?:\s+usage)?(?:\s+limit)?\b",
         r"5\s*(?:小时|小時)",
     ]
     week_patterns = [
@@ -700,8 +691,20 @@ def parse_capture(capture):
         r"\bweek\b",
         r"(?:一周|每周|每週|本周|周|週)",
     ]
-    five = extract_usage(build_block(lines, five_patterns, week_patterns), "5h")
-    week = extract_usage(build_block(lines, week_patterns, five_patterns), "Week")
+    def parse_text(text):
+        lines = normalize_lines(text)
+        return (
+            extract_usage(build_block(lines, five_patterns, week_patterns), "5h"),
+            extract_usage(build_block(lines, week_patterns, five_patterns), "Week"),
+        )
+
+    five, week = parse_text(focused_text if len(focused_text) >= 60 else full_text)
+    if full_text and (five.get("percent") is None or week.get("percent") is None):
+        full_five, full_week = parse_text(full_text)
+        if five.get("percent") is None and full_five.get("percent") is not None:
+            five = full_five
+        if week.get("percent") is None and full_week.get("percent") is not None:
+            week = full_week
     return five, week
 
 
