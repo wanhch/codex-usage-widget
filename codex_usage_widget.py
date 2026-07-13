@@ -50,7 +50,8 @@ DEFAULT_CONFIG = {
     "close_edge_on_exit": True,
     "system_poll_seconds": 1,
     "gauge_animation_ms": 100,
-    "widget_width": 236,
+    "show_five_hour_usage": False,
+    "widget_width": 183,
     "widget_height": 50,
     "widget_x": None,
     "widget_y": None,
@@ -981,6 +982,10 @@ class UsageWidget:
         }
         self.cpu_gauge = self._metric_state()
         self.mem_gauge = self._metric_state()
+        self.show_five_hour_usage = bool(self.cfg.get("show_five_hour_usage", False))
+        self.five_x = 137
+        self.week_x = 190 if self.show_five_hour_usage else 137
+        layout_width = 236 if self.show_five_hour_usage else DEFAULT_CONFIG["widget_width"]
 
         self.root = tk.Tk()
         self.root.title("Codex Usage")
@@ -989,16 +994,16 @@ class UsageWidget:
         self.root.configure(bg=WIDGET_BG)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-        self.w = int(self.cfg.get("widget_width") or DEFAULT_CONFIG["widget_width"])
+        self.w = int(self.cfg.get("widget_width") or layout_width)
         self.h = int(self.cfg.get("widget_height") or DEFAULT_CONFIG["widget_height"])
-        if (self.w, self.h) in LEGACY_WIDGET_SIZES:
-            self.w = DEFAULT_CONFIG["widget_width"]
+        if (self.w, self.h) in LEGACY_WIDGET_SIZES or (not self.show_five_hour_usage and (self.w, self.h) == (236, 50)):
+            self.w = layout_width
             self.h = DEFAULT_CONFIG["widget_height"]
             self.cfg["widget_width"] = self.w
             self.cfg["widget_height"] = self.h
             save_config(self.cfg)
-        elif self.w < 220 or self.h < 46 or self.w > 420 or self.h > 150:
-            self.w = DEFAULT_CONFIG["widget_width"]
+        elif self.w < 160 or self.h < 46 or self.w > 420 or self.h > 150:
+            self.w = layout_width
             self.h = DEFAULT_CONFIG["widget_height"]
             self.cfg["widget_width"] = self.w
             self.cfg["widget_height"] = self.h
@@ -1112,13 +1117,16 @@ class UsageWidget:
             self.bitmap_text = {
                 "cpu_label": c.create_text(33, 43, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
                 "mem_label": c.create_text(78, 43, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "five_label": c.create_text(137, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
-                "five_value": c.create_text(137, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                "five_reset": c.create_text(137, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
-                "week_label": c.create_text(190, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
-                "week_value": c.create_text(190, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                "week_reset": c.create_text(190, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                "week_label": c.create_text(self.week_x, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
+                "week_value": c.create_text(self.week_x, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                "week_reset": c.create_text(self.week_x, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
             }
+            if self.show_five_hour_usage:
+                self.bitmap_text.update({
+                    "five_label": c.create_text(self.five_x, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
+                    "five_value": c.create_text(self.five_x, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
+                    "five_reset": c.create_text(self.five_x, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                })
             self._render_bitmap_dials()
             self._sync_bitmap_text()
             for item in self.bitmap_text.values():
@@ -1141,17 +1149,19 @@ class UsageWidget:
             label="MEM",
             color="#c792ea",
         )
-        self.five_ring = self._create_ring(
-            cx=137,
-            cy=26,
-            radius=18,
-            label="5h",
-            color="#62c6ff",
-            light_color=WIDGET_BG,
-            timer_color="#237da3",
-        )
+        self.five_ring = None
+        if self.show_five_hour_usage:
+            self.five_ring = self._create_ring(
+                cx=self.five_x,
+                cy=26,
+                radius=18,
+                label="5h",
+                color="#62c6ff",
+                light_color=WIDGET_BG,
+                timer_color="#237da3",
+            )
         self.week_ring = self._create_ring(
-            cx=190,
+            cx=self.week_x,
             cy=26,
             radius=18,
             label="7d",
@@ -1339,8 +1349,9 @@ class UsageWidget:
 
         self._draw_bitmap_gauge(draw, 33, 30, 17, self.cpu_gauge.get("display", 0.0), scale)
         self._draw_bitmap_gauge(draw, 78, 30, 17, self.mem_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_ring(draw, 137, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
-        self._draw_bitmap_ring(draw, 190, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
+        if self.show_five_hour_usage:
+            self._draw_bitmap_ring(draw, self.five_x, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
+        self._draw_bitmap_ring(draw, self.week_x, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
 
         image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
         self.dial_photo = ImageTk.PhotoImage(image)
@@ -1352,9 +1363,10 @@ class UsageWidget:
             return
         five = self.dial_state["five"]
         week = self.dial_state["week"]
-        self.canvas.itemconfigure(self.bitmap_text["five_label"], text=five.get("label", "5h"))
-        self.canvas.itemconfigure(self.bitmap_text["five_value"], text=five.get("text", "--"))
-        self.canvas.itemconfigure(self.bitmap_text["five_reset"], text=trim_text(five.get("reset_text", ""), 6))
+        if self.show_five_hour_usage:
+            self.canvas.itemconfigure(self.bitmap_text["five_label"], text=five.get("label", "5h"))
+            self.canvas.itemconfigure(self.bitmap_text["five_value"], text=five.get("text", "--"))
+            self.canvas.itemconfigure(self.bitmap_text["five_reset"], text=trim_text(five.get("reset_text", ""), 6))
         self.canvas.itemconfigure(self.bitmap_text["week_label"], text=week.get("label", "7d"))
         self.canvas.itemconfigure(self.bitmap_text["week_value"], text=week.get("text", "--"))
         self.canvas.itemconfigure(self.bitmap_text["week_reset"], text=trim_text(week.get("reset_text", ""), 6))
@@ -1679,6 +1691,8 @@ class UsageWidget:
             self.dial_state[key]["reset_text"] = reset_text
             self.dial_state[key]["reset_fraction"] = reset_fraction
             self._render_bitmap_dials()
+            return
+        if ring is None:
             return
         self.canvas.coords(
             ring["ring"],
