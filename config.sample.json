@@ -1,5 +1,9 @@
 {
   "poll_seconds": 30,
+  "data_source": "codex_cli",
+  "codex_cli_path": null,
+  "kimi_cli_path": null,
+  "show_kimi_usage": true,
   "remote_debugging_port": 39225,
   "refresh_page_each_poll": false,
   "reload_wait_seconds": 4,
@@ -9,8 +13,8 @@
   "system_poll_seconds": 1,
   "gauge_animation_ms": 100,
   "show_five_hour_usage": false,
-  "widget_width": 183,
-  "widget_height": 50,
+  "widget_width": 334,
+  "widget_height": 48,
   "widget_x": null,
   "widget_y": null,
   "allow_taskbar_overlap": true

@@ -24,9 +24,14 @@ try {
     $localPyInstaller = Join-Path $BuildTools "PyInstaller\__main__.py"
     $hasGlobalPyInstaller = $false
 
-    python -m PyInstaller --version *> $null
-    if ($LASTEXITCODE -eq 0) {
-        $hasGlobalPyInstaller = $true
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        python -m PyInstaller --version *> $null
+        $hasGlobalPyInstaller = ($LASTEXITCODE -eq 0)
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
     }
 
     if (-not $hasGlobalPyInstaller -and -not (Test-Path $localPyInstaller)) {

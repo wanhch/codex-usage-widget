@@ -42,6 +42,10 @@ CAPTURE_PATH = APP_DIR / "last_capture.txt"
 
 DEFAULT_CONFIG = {
     "poll_seconds": 30,
+    "data_source": "codex_cli",
+    "codex_cli_path": None,
+    "kimi_cli_path": None,
+    "show_kimi_usage": True,
     "remote_debugging_port": 39225,
     "refresh_page_each_poll": False,
     "reload_wait_seconds": 4,
@@ -51,20 +55,114 @@ DEFAULT_CONFIG = {
     "system_poll_seconds": 1,
     "gauge_animation_ms": 100,
     "show_five_hour_usage": False,
-    "widget_width": 183,
-    "widget_height": 50,
+    "widget_width": 334,
+    "widget_height": 48,
     "widget_x": None,
     "widget_y": None,
     "allow_taskbar_overlap": True,
 }
 
-LEGACY_WIDGET_SIZES = {(286, 78), (286, 50)}
+LEGACY_WIDGET_SIZES = {(183, 50), (228, 50), (236, 50), (281, 50), (286, 78), (286, 50), (334, 50)}
 WIDGET_BG = "#14181b"
+UI_TEXT = "#f2f4f5"
+UI_MUTED = "#b8c0c6"
+UI_TRACK = "#343a40"
+UI_NEEDLE = "#e8edf0"
+STATUS_WAIT = "#d8ae5e"
+STATUS_OK = "#62c99a"
+STATUS_ERROR = "#ef6a70"
+GPT_FIVE = "#c6ccd3"
+GPT_WEEK = "#6f7883"
+GPT_FIVE_TIMER = "#3f4347"
+GPT_WEEK_TIMER = "#262b30"
+KIMI_FIVE = "#4da8ff"
+KIMI_WEEK = "#2f6bff"
+KIMI_FIVE_TIMER = "#2f5d88"
+KIMI_WEEK_TIMER = "#214088"
 HWND_TOPMOST = -1
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
+
+
+def _hex_to_rgb(color):
+    color = color.lstrip("#")
+    return tuple(int(color[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(value)))) for value in rgb))
+
+
+def _blend_color(left, right, ratio):
+    left_rgb = _hex_to_rgb(left)
+    right_rgb = _hex_to_rgb(right)
+    return _rgb_to_hex(
+        left_rgb[index] + (right_rgb[index] - left_rgb[index]) * ratio
+        for index in range(3)
+    )
+
+
+def detect_taskbar_color():
+    try:
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+        user32.FindWindowW.restype = ctypes.c_void_p
+        hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        if not hwnd:
+            return WIDGET_BG
+        rect = (ctypes.c_long * 4)()
+        if not user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+            return WIDGET_BG
+        left, top, right, bottom = rect
+        if right <= left or bottom <= top:
+            return WIDGET_BG
+        dc = user32.GetDC(None)
+        if not dc:
+            return WIDGET_BG
+        samples = []
+        try:
+            for xi in range(2, 39):
+                x = left + (right - left - 1) * xi // 40
+                for yi in (2, 5, 8):
+                    y = top + (bottom - top - 1) * yi // 10
+                    value = gdi32.GetPixel(dc, x, y)
+                    if value == -1:
+                        continue
+                    samples.append((value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF))
+        finally:
+            user32.ReleaseDC(None, dc)
+        if not samples:
+            return WIDGET_BG
+        channels = list(zip(*samples))
+        median = tuple(sorted(channel)[len(channel) // 2] for channel in channels)
+        return _rgb_to_hex(median)
+    except Exception:
+        return WIDGET_BG
+
+
+def apply_taskbar_palette(background):
+    global WIDGET_BG, UI_TEXT, UI_MUTED, UI_TRACK, UI_NEEDLE
+    global GPT_FIVE, GPT_WEEK, KIMI_FIVE, KIMI_WEEK
+    global GPT_FIVE_TIMER, GPT_WEEK_TIMER, KIMI_FIVE_TIMER, KIMI_WEEK_TIMER
+    WIDGET_BG = background
+    red, green, blue = _hex_to_rgb(background)
+    luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255
+    light_background = luminance > 0.58
+    foreground = "#17191b" if light_background else "#f2f4f5"
+    UI_TEXT = foreground
+    UI_MUTED = _blend_color(background, foreground, 0.70)
+    UI_TRACK = _blend_color(background, foreground, 0.16)
+    UI_NEEDLE = _blend_color(background, foreground, 0.90)
+    GPT_FIVE = "#5d6670" if light_background else "#c6ccd3"
+    GPT_WEEK = "#31383f" if light_background else "#6f7883"
+    KIMI_FIVE = "#1582e3" if light_background else "#4da8ff"
+    KIMI_WEEK = "#2456d6" if light_background else "#2f6bff"
+    GPT_FIVE_TIMER = _blend_color(background, GPT_FIVE, 0.24)
+    GPT_WEEK_TIMER = _blend_color(background, GPT_WEEK, 0.20)
+    KIMI_FIVE_TIMER = _blend_color(background, KIMI_FIVE, 0.48)
+    KIMI_WEEK_TIMER = _blend_color(background, KIMI_WEEK, 0.48)
 
 
 EXTRACT_JS = r"""
@@ -125,6 +223,193 @@ def save_config(cfg):
         log(f"config save failed: {exc}")
 
 
+def find_codex_cli(configured_path=None):
+    candidates = []
+    if configured_path:
+        candidates.append(pathlib.Path(os.path.expandvars(str(configured_path))).expanduser())
+
+    found = shutil.which("codex.exe")
+    if found:
+        candidates.append(pathlib.Path(found))
+
+    appdata = pathlib.Path(os.environ.get("APPDATA", ""))
+    localappdata = pathlib.Path(os.environ.get("LOCALAPPDATA", ""))
+    package_roots = [
+        appdata / "npm" / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai",
+        localappdata / "npm" / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai",
+    ]
+    for package_root in package_roots:
+        if not package_root.exists():
+            continue
+        candidates.extend(package_root.glob("codex-win32-*/vendor/*/bin/codex.exe"))
+
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return str(candidate.resolve())
+        except OSError:
+            pass
+    raise RuntimeError(
+        "Codex CLI was not found. Install/update Codex CLI or set codex_cli_path in config.json."
+    )
+
+
+def query_codex_rate_limits(cfg, timeout=15):
+    codex = find_codex_cli(cfg.get("codex_cli_path"))
+    flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    process = subprocess.Popen(
+        [codex, "app-server", "--stdio"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        creationflags=flags,
+    )
+    responses = queue.Queue()
+
+    def read_stdout():
+        try:
+            for line in process.stdout:
+                responses.put(line)
+        except Exception:
+            pass
+
+    threading.Thread(target=read_stdout, name="codex-app-server-reader", daemon=True).start()
+    messages = [
+        {
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {
+                    "name": "codex-usage-widget",
+                    "title": "Codex Usage Widget",
+                    "version": "1.0",
+                }
+            },
+        },
+        {"method": "initialized"},
+        {"id": 2, "method": "account/rateLimits/read"},
+    ]
+    try:
+        for message in messages:
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if process.poll() is not None and responses.empty():
+                raise RuntimeError(f"Codex app-server exited with code {process.returncode}.")
+            try:
+                line = responses.get(timeout=min(0.5, max(0.05, deadline - time.time())))
+            except queue.Empty:
+                continue
+            try:
+                response = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if response.get("id") != 2:
+                continue
+            if response.get("error"):
+                raise RuntimeError(f"Codex rate-limit query failed: {response['error']}")
+            result = response.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError("Codex app-server returned no rate-limit data.")
+            return result
+        raise TimeoutError("Codex app-server rate-limit query timed out.")
+    finally:
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+
+def usage_from_rate_limit_window(window, title):
+    result = {
+        "title": title,
+        "value": "Waiting",
+        "detail": "No matching rate-limit window",
+        "percent": None,
+        "reset_text": "",
+        "reset_fraction": None,
+        "raw": "",
+    }
+    if not isinstance(window, dict) or window.get("usedPercent") is None:
+        return result
+
+    used_percent = max(0.0, min(100.0, float(window["usedPercent"])))
+    percent = 100.0 - used_percent
+    duration = window.get("windowDurationMins")
+    resets_at = window.get("resetsAt")
+    result["value"] = f"{format_number(percent)}% remaining"
+    result["percent"] = percent
+    result["detail"] = f"Codex CLI {format_number(percent)}% remaining"
+    result["raw"] = json.dumps(window, ensure_ascii=False)
+    if resets_at is not None:
+        minutes = max(0, int(round((float(resets_at) - time.time()) / 60)))
+        result["reset_text"] = format_reset_minutes(minutes)
+        if duration:
+            result["reset_fraction"] = max(0.0, min(1.0, minutes / float(duration)))
+    return result
+
+
+def parse_codex_rate_limits(response):
+    buckets = response.get("rateLimitsByLimitId") or {}
+    snapshot = buckets.get("codex") or response.get("rateLimits") or {}
+    windows = [snapshot.get("primary"), snapshot.get("secondary")]
+    five_window = None
+    week_window = None
+    for index, window in enumerate(windows):
+        if not isinstance(window, dict):
+            continue
+        duration = window.get("windowDurationMins")
+        if duration is not None and duration <= 24 * 60:
+            five_window = window
+        elif duration is not None:
+            week_window = window
+        elif index == 0:
+            five_window = window
+        else:
+            week_window = window
+    return (
+        usage_from_rate_limit_window(five_window, "5h"),
+        usage_from_rate_limit_window(week_window, "Week"),
+    )
+
+
+def collect_codex_cli_usage(cfg):
+    response = query_codex_rate_limits(cfg)
+    five, week = parse_codex_rate_limits(response)
+    try:
+        CAPTURE_PATH.write_text(
+            json.dumps({"source": "codex_cli", "response": response}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "login": False,
+        "source": "codex_cli",
+        "five": five,
+        "week": week,
+        "updated": datetime.now().strftime("%H:%M:%S"),
+    }
+
+
+def open_usage_page():
+    try:
+        os.startfile(TARGET_URL)
+    except Exception as exc:
+        log(f"open usage page failed: {exc}")
+
+
 def find_edge():
     candidates = [
         pathlib.Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
@@ -172,6 +457,162 @@ def find_free_port(start):
     port = sock.getsockname()[1]
     sock.close()
     return port
+
+
+def find_kimi_cli(configured_path=None):
+    candidates = []
+    if configured_path:
+        candidates.append(pathlib.Path(os.path.expandvars(str(configured_path))).expanduser())
+    found = shutil.which("kimi.exe")
+    if found:
+        candidates.append(pathlib.Path(found))
+    candidates.append(pathlib.Path.home() / ".kimi-code" / "bin" / "kimi.exe")
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return str(candidate.resolve())
+        except OSError:
+            pass
+    raise RuntimeError(
+        "Kimi CLI was not found. Install/update Kimi Code CLI or set kimi_cli_path in config.json."
+    )
+
+
+class KimiUsageClient:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.process = None
+        self.port = None
+
+    def _server_token(self):
+        token_path = pathlib.Path.home() / ".kimi-code" / "server.token"
+        token = token_path.read_text(encoding="utf-8").strip()
+        if not token:
+            raise RuntimeError("Kimi local server token is empty.")
+        return token
+
+    def _request_usage(self, timeout=4):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/v1/oauth/usage",
+            headers={
+                "Authorization": f"Bearer {self._server_token()}",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace"))
+        if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
+            raise RuntimeError(payload.get("msg") or "Kimi usage query failed.")
+        data = payload["data"]
+        if data.get("kind") != "ok":
+            raise RuntimeError(data.get("message") or "Kimi login or subscription is unavailable.")
+        return data
+
+    def start(self):
+        if self.process is not None and self.process.poll() is None:
+            return
+        self.close()
+        kimi = find_kimi_cli(self.cfg.get("kimi_cli_path"))
+        self.port = find_free_port(58649)
+        flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        self.process = subprocess.Popen(
+            [kimi, "web", "--no-open", "--port", str(self.port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+        deadline = time.time() + 25
+        last_error = None
+        while time.time() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError(f"Kimi local server exited with code {self.process.returncode}.")
+            try:
+                self._request_usage(timeout=2)
+                return
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.4)
+        self.close()
+        raise RuntimeError(f"Kimi local usage service did not become ready: {last_error}")
+
+    def query(self):
+        self.start()
+        try:
+            return self._request_usage()
+        except Exception:
+            self.close()
+            self.start()
+            return self._request_usage()
+
+    def close(self):
+        process = self.process
+        self.process = None
+        self.port = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+
+def usage_from_kimi_window(window, title):
+    result = {
+        "title": title,
+        "value": "Waiting",
+        "detail": "No matching Kimi rate-limit window",
+        "percent": None,
+        "reset_text": "",
+        "reset_fraction": None,
+        "raw": "",
+    }
+    if not isinstance(window, dict):
+        return result
+    used = float(window.get("used") or 0)
+    limit = float(window.get("limit") or 0)
+    if limit <= 0:
+        return result
+    percent = max(0.0, min(100.0, (limit - used) / limit * 100.0))
+    result["value"] = f"{format_number(percent)}% remaining"
+    result["percent"] = percent
+    result["detail"] = f"Kimi {format_number(percent)}% remaining"
+    result["raw"] = json.dumps(window, ensure_ascii=False)
+    window_info = window.get("window") or {}
+    duration = float(window_info.get("duration") or 0)
+    unit = (window_info.get("unit") or "").lower()
+    total_minutes = duration * (60 if unit.startswith("hour") else 7 * 24 * 60 if unit.startswith("week") else 0)
+    reset_at = window.get("reset_at")
+    if reset_at:
+        try:
+            reset_timestamp = datetime.fromisoformat(reset_at.replace("Z", "+00:00")).timestamp()
+            minutes = max(0, int(round((reset_timestamp - time.time()) / 60)))
+            result["reset_text"] = format_reset_minutes(minutes)
+            if total_minutes:
+                result["reset_fraction"] = max(0.0, min(1.0, minutes / total_minutes))
+        except (TypeError, ValueError):
+            pass
+    return result
+
+
+def parse_kimi_usage(data):
+    windows = [data.get("summary")] + list(data.get("limits") or [])
+    five_window = None
+    week_window = None
+    for window in windows:
+        info = window.get("window") if isinstance(window, dict) else None
+        if not isinstance(info, dict):
+            continue
+        unit = (info.get("unit") or "").lower()
+        duration = float(info.get("duration") or 0)
+        if unit.startswith("hour") and duration == 5:
+            five_window = window
+        elif unit.startswith("week"):
+            week_window = window
+    return usage_from_kimi_window(five_window, "K5"), usage_from_kimi_window(week_window, "K7")
 
 
 def launch_edge(port, mode="hidden"):
@@ -482,8 +923,9 @@ def extract_usage(block_lines, title):
         limit = float(match.group(2))
         if limit <= 0:
             continue
-        pct = max(0.0, min(100.0, used / limit * 100.0))
-        result["value"] = f"{format_number(used)} / {format_number(limit)}"
+        remaining = max(0.0, limit - used)
+        pct = max(0.0, min(100.0, remaining / limit * 100.0))
+        result["value"] = f"{format_number(remaining)} / {format_number(limit)} remaining"
         result["percent"] = pct
         result["detail"] = find_detail_line(block_lines)
         enrich_usage_result(result, title)
@@ -491,8 +933,14 @@ def extract_usage(block_lines, title):
 
     percent_match = re.search(r"(?<![\d.])(\d+(?:\.\d+)?)\s*%", compact)
     if percent_match:
-        pct = max(0.0, min(100.0, float(percent_match.group(1))))
-        result["value"] = f"{format_number(pct)}% used"
+        shown_pct = max(0.0, min(100.0, float(percent_match.group(1))))
+        is_remaining = re.search(
+            r"\b(?:remaining|left|available)\b|剩余|可用",
+            compact,
+            re.IGNORECASE,
+        )
+        pct = shown_pct if is_remaining else 100.0 - shown_pct
+        result["value"] = f"{format_number(pct)}% remaining"
         result["percent"] = pct
         result["detail"] = find_detail_line(block_lines)
         enrich_usage_result(result, title)
@@ -898,6 +1346,30 @@ class MEMORYSTATUSEX(ctypes.Structure):
     ]
 
 
+class PDH_FMT_COUNTERVALUE_UNION(ctypes.Union):
+    _fields_ = [
+        ("longValue", ctypes.c_long),
+        ("doubleValue", ctypes.c_double),
+        ("largeValue", ctypes.c_longlong),
+        ("wideStringValue", ctypes.c_wchar_p),
+    ]
+
+
+class PDH_FMT_COUNTERVALUE(ctypes.Structure):
+    _anonymous_ = ("value",)
+    _fields_ = [
+        ("CStatus", ctypes.c_ulong),
+        ("value", PDH_FMT_COUNTERVALUE_UNION),
+    ]
+
+
+class PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
+    _fields_ = [
+        ("szName", ctypes.c_wchar_p),
+        ("FmtValue", PDH_FMT_COUNTERVALUE),
+    ]
+
+
 def filetime_to_int(filetime):
     return (filetime.dwHighDateTime << 32) | filetime.dwLowDateTime
 
@@ -907,12 +1379,57 @@ class SystemSampler:
         self.last_idle = None
         self.last_kernel = None
         self.last_user = None
+        self.pdh = None
+        self.gpu_query = ctypes.c_void_p()
+        self.gpu_counter = ctypes.c_void_p()
+        self._init_gpu_counter()
 
     def sample(self):
         return {
             "cpu": self.cpu_percent(),
             "memory": self.memory_percent(),
+            "gpu": self.gpu_percent(),
         }
+
+    def _init_gpu_counter(self):
+        try:
+            self.pdh = ctypes.WinDLL("pdh")
+            self.pdh.PdhOpenQueryW.argtypes = [ctypes.c_wchar_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
+            self.pdh.PdhOpenQueryW.restype = ctypes.c_long
+            self.pdh.PdhAddEnglishCounterW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            self.pdh.PdhAddEnglishCounterW.restype = ctypes.c_long
+            self.pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+            self.pdh.PdhCollectQueryData.restype = ctypes.c_long
+            self.pdh.PdhGetFormattedCounterArrayW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_ulong,
+                ctypes.POINTER(ctypes.c_ulong),
+                ctypes.POINTER(ctypes.c_ulong),
+                ctypes.c_void_p,
+            ]
+            self.pdh.PdhGetFormattedCounterArrayW.restype = ctypes.c_long
+            self.pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
+            self.pdh.PdhCloseQuery.restype = ctypes.c_long
+            if self.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.gpu_query)) != 0:
+                self.pdh = None
+                return
+            status = self.pdh.PdhAddEnglishCounterW(
+                self.gpu_query,
+                r"\GPU Engine(*)\Utilization Percentage",
+                0,
+                ctypes.byref(self.gpu_counter),
+            )
+            if status != 0:
+                self.close()
+                return
+            self.pdh.PdhCollectQueryData(self.gpu_query)
+        except Exception:
+            self.close()
 
     def cpu_percent(self):
         idle = FILETIME()
@@ -956,9 +1473,68 @@ class SystemSampler:
             return None
         return float(status.dwMemoryLoad)
 
+    def gpu_percent(self):
+        if self.pdh is None or not self.gpu_counter.value:
+            return None
+        try:
+            if self.pdh.PdhCollectQueryData(self.gpu_query) != 0:
+                return None
+            buffer_size = ctypes.c_ulong(0)
+            item_count = ctypes.c_ulong(0)
+            status = self.pdh.PdhGetFormattedCounterArrayW(
+                self.gpu_counter,
+                0x00000200,
+                ctypes.byref(buffer_size),
+                ctypes.byref(item_count),
+                None,
+            )
+            if status & 0xFFFFFFFF != 0x800007D2 or buffer_size.value == 0:
+                return None
+            buffer = ctypes.create_string_buffer(buffer_size.value)
+            status = self.pdh.PdhGetFormattedCounterArrayW(
+                self.gpu_counter,
+                0x00000200,
+                ctypes.byref(buffer_size),
+                ctypes.byref(item_count),
+                buffer,
+            )
+            if status != 0:
+                return None
+            items = ctypes.cast(buffer, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W))
+            engine_totals = {}
+            for index in range(item_count.value):
+                item = items[index]
+                if item.FmtValue.CStatus not in (0, 1):
+                    continue
+                name = item.szName or ""
+                match = re.search(
+                    r"luid_(.+?)_phys_(\d+)_eng_(\d+)_engtype_(.+)$",
+                    name,
+                    re.IGNORECASE,
+                )
+                key = match.groups() if match else (name,)
+                value = max(0.0, float(item.FmtValue.doubleValue))
+                engine_totals[key] = engine_totals.get(key, 0.0) + value
+            if not engine_totals:
+                return 0.0
+            return max(0.0, min(100.0, max(engine_totals.values())))
+        except Exception:
+            return None
+
+    def close(self):
+        if self.pdh is not None and self.gpu_query.value:
+            try:
+                self.pdh.PdhCloseQuery(self.gpu_query)
+            except Exception:
+                pass
+        self.gpu_query = ctypes.c_void_p()
+        self.gpu_counter = ctypes.c_void_p()
+        self.pdh = None
+
 
 class UsageWidget:
     def __init__(self):
+        apply_taskbar_palette(detect_taskbar_color())
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
@@ -969,26 +1545,38 @@ class UsageWidget:
         self.stop_event = threading.Event()
         self.refresh_event = threading.Event()
         self.edge_minimized = False
+        self.browser_started = False
         self.drag = None
         self.last = None
         self.system_sampler = SystemSampler()
+        self.kimi_client = KimiUsageClient(self.cfg)
         self.use_bitmap_dials = Image is not None and ImageTk is not None
         self.dial_scale = 4
         self.dial_photo = None
         self.dial_image_id = None
         self.dial_state = {
-            "five": {"label": "5h", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
-            "week": {"label": "7d", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+            "five": {"label": "G5", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+            "week": {"label": "G7", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+            "kimi_five": {"label": "K5", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
+            "kimi_week": {"label": "K7", "percent": None, "text": "--", "reset_text": "", "reset_fraction": None},
         }
         self.cpu_gauge = self._metric_state()
         self.mem_gauge = self._metric_state()
+        self.gpu_gauge = self._metric_state()
         self.show_five_hour_usage = bool(self.cfg.get("show_five_hour_usage", False))
-        self.five_x = 137
-        self.week_x = 190 if self.show_five_hour_usage else 137
-        layout_width = 236 if self.show_five_hour_usage else DEFAULT_CONFIG["widget_width"]
+        self.show_kimi_usage = bool(self.cfg.get("show_kimi_usage", True))
+        self.gpu_x = 123
+        self.five_x = 182
+        self.week_x = 235 if self.show_five_hour_usage else 182
+        self.kimi_five_x = self.week_x + 53
+        self.kimi_week_x = self.kimi_five_x + 53
+        if self.show_kimi_usage:
+            layout_width = self.kimi_week_x + 46
+        else:
+            layout_width = self.week_x + 46
 
         self.root = tk.Tk()
-        self.root.title("Codex Usage")
+        self.root.title("Coding Usage")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=WIDGET_BG)
@@ -1110,22 +1698,32 @@ class UsageWidget:
     def _build_canvas(self):
         c = self.canvas
         self.bg = c.create_rectangle(0, 0, self.w, self.h, fill=WIDGET_BG, outline="")
-        self.status_dot = c.create_oval(5, 5, 10, 10, fill="#f6c177", outline="")
-        self.close_btn = c.create_text(self.w - 8, 8, text="x", anchor="center", fill="#d7dee2", font=("Segoe UI Semibold", 8), tags=("close",))
+        self.status_dot = c.create_oval(5, 5, 10, 10, fill=STATUS_WAIT, outline="")
+        self.close_btn = c.create_text(self.w - 8, 8, text="x", anchor="center", fill=UI_MUTED, font=("Segoe UI Semibold", 8), tags=("close",))
         if self.use_bitmap_dials:
             self.dial_image_id = c.create_image(0, 0, anchor="nw")
             self.bitmap_text = {
-                "cpu_label": c.create_text(33, 43, text="CPU", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "mem_label": c.create_text(78, 43, text="MEM", anchor="center", fill="#f4f7f8", font=("Segoe UI Semibold", 7)),
-                "week_label": c.create_text(self.week_x, 17, text="7d", anchor="center", fill="#f0fff7", font=("Segoe UI Semibold", 7)),
-                "week_value": c.create_text(self.week_x, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                "week_reset": c.create_text(self.week_x, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                "cpu_label": c.create_text(33, 41, text="CPU", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 7)),
+                "mem_label": c.create_text(78, 41, text="MEM", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 7)),
+                "gpu_label": c.create_text(self.gpu_x, 41, text="GPU", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 7)),
+                "week_label": c.create_text(self.week_x, 15, text="G7", anchor="center", fill=GPT_FIVE, font=("Segoe UI Semibold", 7)),
+                "week_value": c.create_text(self.week_x, 24, text="--", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 9)),
+                "week_reset": c.create_text(self.week_x, 33, text="", anchor="center", fill=UI_MUTED, font=("Segoe UI Semibold", 6)),
             }
             if self.show_five_hour_usage:
                 self.bitmap_text.update({
-                    "five_label": c.create_text(self.five_x, 17, text="5h", anchor="center", fill="#eef9ff", font=("Segoe UI Semibold", 7)),
-                    "five_value": c.create_text(self.five_x, 26, text="--", anchor="center", fill="#ffffff", font=("Segoe UI Semibold", 9)),
-                    "five_reset": c.create_text(self.five_x, 35, text="", anchor="center", fill="#ecf6f9", font=("Segoe UI Semibold", 6)),
+                    "five_label": c.create_text(self.five_x, 15, text="G5", anchor="center", fill=GPT_FIVE, font=("Segoe UI Semibold", 7)),
+                    "five_value": c.create_text(self.five_x, 24, text="--", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 9)),
+                    "five_reset": c.create_text(self.five_x, 33, text="", anchor="center", fill=UI_MUTED, font=("Segoe UI Semibold", 6)),
+                })
+            if self.show_kimi_usage:
+                self.bitmap_text.update({
+                    "kimi_five_label": c.create_text(self.kimi_five_x, 15, text="K5", anchor="center", fill=KIMI_FIVE, font=("Segoe UI Semibold", 7)),
+                    "kimi_five_value": c.create_text(self.kimi_five_x, 24, text="--", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 9)),
+                    "kimi_five_reset": c.create_text(self.kimi_five_x, 33, text="", anchor="center", fill=UI_MUTED, font=("Segoe UI Semibold", 6)),
+                    "kimi_week_label": c.create_text(self.kimi_week_x, 15, text="K7", anchor="center", fill=KIMI_WEEK, font=("Segoe UI Semibold", 7)),
+                    "kimi_week_value": c.create_text(self.kimi_week_x, 24, text="--", anchor="center", fill=UI_TEXT, font=("Segoe UI Semibold", 9)),
+                    "kimi_week_reset": c.create_text(self.kimi_week_x, 33, text="", anchor="center", fill=UI_MUTED, font=("Segoe UI Semibold", 6)),
                 })
             self._render_bitmap_dials()
             self._sync_bitmap_text()
@@ -1137,38 +1735,66 @@ class UsageWidget:
 
         self.cpu_gauge = self._create_metric_gauge(
             cx=33,
-            cy=30,
+            cy=28,
             radius=17,
             label="CPU",
-            color="#ffb86b",
+            color="#72b6c9",
         )
         self.mem_gauge = self._create_metric_gauge(
             cx=78,
-            cy=30,
+            cy=28,
             radius=17,
             label="MEM",
-            color="#c792ea",
+            color="#a99bd4",
+        )
+        self.gpu_gauge = self._create_metric_gauge(
+            cx=self.gpu_x,
+            cy=28,
+            radius=17,
+            label="GPU",
+            color="#68aee8",
         )
         self.five_ring = None
         if self.show_five_hour_usage:
             self.five_ring = self._create_ring(
                 cx=self.five_x,
-                cy=26,
+                cy=24,
                 radius=18,
-                label="5h",
-                color="#62c6ff",
+                label="G5",
+                color=GPT_FIVE,
                 light_color=WIDGET_BG,
-                timer_color="#237da3",
+                timer_color=GPT_FIVE_TIMER,
             )
         self.week_ring = self._create_ring(
             cx=self.week_x,
-            cy=26,
+            cy=24,
             radius=18,
-            label="7d",
-            color="#5be49b",
+            label="G7",
+            color=GPT_WEEK,
             light_color=WIDGET_BG,
-            timer_color="#238a54",
+            timer_color=GPT_WEEK_TIMER,
         )
+        self.kimi_five_ring = None
+        self.kimi_week_ring = None
+        if self.show_kimi_usage:
+            self.kimi_five_ring = self._create_ring(
+                cx=self.kimi_five_x,
+                cy=24,
+                radius=18,
+                label="K5",
+                color=KIMI_FIVE,
+                light_color=WIDGET_BG,
+                timer_color=KIMI_FIVE_TIMER,
+            )
+            self.kimi_week_ring = self._create_ring(
+                cx=self.kimi_week_x,
+                cy=24,
+                radius=18,
+                label="K7",
+                color=KIMI_WEEK,
+                light_color=WIDGET_BG,
+                timer_color=KIMI_WEEK_TIMER,
+            )
 
     def _metric_state(self):
         return {
@@ -1183,7 +1809,7 @@ class UsageWidget:
             start=205,
             extent=-230,
             style="arc",
-            outline="#283139",
+            outline=UI_TRACK,
             width=3,
         )
         segments = []
@@ -1202,17 +1828,17 @@ class UsageWidget:
             cy,
             cx,
             cy - radius + 7,
-            fill="#eef2f3",
+            fill=UI_NEEDLE,
             width=2,
             capstyle=tk.ROUND,
         )
-        hub = self.canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill="#eef2f3", outline="")
+        hub = self.canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill=UI_NEEDLE, outline="")
         label_id = self.canvas.create_text(
             cx,
             cy + radius - 4,
             text=label,
             anchor="center",
-            fill="#d7dee2",
+            fill=UI_MUTED,
             font=("Segoe UI Semibold", 7),
         )
         return {
@@ -1233,7 +1859,7 @@ class UsageWidget:
 
     def _create_ring(self, cx, cy, radius, label, color, light_color, timer_color):
         box = (cx - radius, cy - radius, cx + radius, cy + radius)
-        bg = self.canvas.create_oval(*box, outline="#273038", width=4)
+        bg = self.canvas.create_oval(*box, outline=UI_TRACK, width=4)
         inner_radius = radius - 6
         inner_box = (
             cx - inner_radius,
@@ -1260,7 +1886,7 @@ class UsageWidget:
             cy - 11,
             text=label,
             anchor="center",
-            fill="#d9edf5",
+            fill=UI_MUTED,
             font=("Segoe UI Semibold", 7),
         )
         value_id = self.canvas.create_text(
@@ -1268,7 +1894,7 @@ class UsageWidget:
             cy,
             text="--",
             anchor="center",
-            fill="#ffffff",
+            fill=UI_TEXT,
             font=("Segoe UI Semibold", 9),
         )
         reset_id = self.canvas.create_text(
@@ -1276,7 +1902,7 @@ class UsageWidget:
             cy + 12,
             text="",
             anchor="center",
-            fill="#d6e3e8",
+            fill=UI_MUTED,
             font=("Segoe UI Semibold", 6),
         )
         return {
@@ -1323,10 +1949,11 @@ class UsageWidget:
     def _metric_gradient_color(self, ratio):
         ratio = max(0.0, min(1.0, float(ratio)))
         stops = [
-            (0.00, (248, 196, 138)),
-            (0.55, (248, 196, 138)),
-            (0.80, (221, 80, 68)),
-            (1.00, (122, 12, 28)),
+            (0.00, (104, 174, 196)),
+            (0.55, (104, 174, 196)),
+            (0.78, (222, 179, 98)),
+            (0.92, (239, 112, 100)),
+            (1.00, (190, 58, 76)),
         ]
         for index in range(len(stops) - 1):
             left_pos, left_color = stops[index]
@@ -1347,11 +1974,15 @@ class UsageWidget:
         image = Image.new("RGBA", (self.w * scale, self.h * scale), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        self._draw_bitmap_gauge(draw, 33, 30, 17, self.cpu_gauge.get("display", 0.0), scale)
-        self._draw_bitmap_gauge(draw, 78, 30, 17, self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 33, 28, 17, self.cpu_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, 78, 28, 17, self.mem_gauge.get("display", 0.0), scale)
+        self._draw_bitmap_gauge(draw, self.gpu_x, 28, 17, self.gpu_gauge.get("display", 0.0), scale)
         if self.show_five_hour_usage:
-            self._draw_bitmap_ring(draw, self.five_x, 26, 18, self.dial_state["five"], "#62c6ff", "#237da3", scale)
-        self._draw_bitmap_ring(draw, self.week_x, 26, 18, self.dial_state["week"], "#5be49b", "#238a54", scale)
+            self._draw_bitmap_ring(draw, self.five_x, 24, 18, self.dial_state["five"], GPT_FIVE, GPT_FIVE_TIMER, scale)
+        self._draw_bitmap_ring(draw, self.week_x, 24, 18, self.dial_state["week"], GPT_WEEK, GPT_WEEK_TIMER, scale)
+        if self.show_kimi_usage:
+            self._draw_bitmap_ring(draw, self.kimi_five_x, 24, 18, self.dial_state["kimi_five"], KIMI_FIVE, KIMI_FIVE_TIMER, scale)
+            self._draw_bitmap_ring(draw, self.kimi_week_x, 24, 18, self.dial_state["kimi_week"], KIMI_WEEK, KIMI_WEEK_TIMER, scale)
 
         image = image.resize((self.w, self.h), Image.Resampling.LANCZOS)
         self.dial_photo = ImageTk.PhotoImage(image)
@@ -1364,12 +1995,19 @@ class UsageWidget:
         five = self.dial_state["five"]
         week = self.dial_state["week"]
         if self.show_five_hour_usage:
-            self.canvas.itemconfigure(self.bitmap_text["five_label"], text=five.get("label", "5h"))
+            self.canvas.itemconfigure(self.bitmap_text["five_label"], text=five.get("label", "G5"))
             self.canvas.itemconfigure(self.bitmap_text["five_value"], text=five.get("text", "--"))
             self.canvas.itemconfigure(self.bitmap_text["five_reset"], text=trim_text(five.get("reset_text", ""), 6))
-        self.canvas.itemconfigure(self.bitmap_text["week_label"], text=week.get("label", "7d"))
+        self.canvas.itemconfigure(self.bitmap_text["week_label"], text=week.get("label", "G7"))
         self.canvas.itemconfigure(self.bitmap_text["week_value"], text=week.get("text", "--"))
         self.canvas.itemconfigure(self.bitmap_text["week_reset"], text=trim_text(week.get("reset_text", ""), 6))
+        if self.show_kimi_usage:
+            kimi_five = self.dial_state["kimi_five"]
+            kimi_week = self.dial_state["kimi_week"]
+            for key, state in (("kimi_five", kimi_five), ("kimi_week", kimi_week)):
+                self.canvas.itemconfigure(self.bitmap_text[f"{key}_label"], text=state.get("label", "K5" if key == "kimi_five" else "K7"))
+                self.canvas.itemconfigure(self.bitmap_text[f"{key}_value"], text=state.get("text", "--"))
+                self.canvas.itemconfigure(self.bitmap_text[f"{key}_reset"], text=trim_text(state.get("reset_text", ""), 6))
 
     def _draw_bitmap_gauge(self, draw, cx, cy, radius, percent, scale):
         cx *= scale
@@ -1378,7 +2016,7 @@ class UsageWidget:
         percent = max(0.0, min(100.0, float(percent or 0.0)))
         width = 3 * scale
         bg_points = self._bitmap_gauge_arc_points(cx, cy, radius, 0.0, 1.0)
-        self._draw_round_line(draw, bg_points, "#283139", width)
+        self._draw_round_line(draw, bg_points, UI_TRACK, width)
 
         segment_count = 48
         visible_segments = int(math.ceil(segment_count * percent / 100))
@@ -1392,9 +2030,9 @@ class UsageWidget:
         length = radius - 8 * scale
         x2 = cx + length * math.cos(angle)
         y2 = cy - length * math.sin(angle)
-        draw.line([cx, cy, x2, y2], fill="#eef2f3", width=2 * scale)
+        draw.line([cx, cy, x2, y2], fill=UI_NEEDLE, width=2 * scale)
         hub = 2.5 * scale
-        draw.ellipse([cx - hub, cy - hub, cx + hub, cy + hub], fill="#eef2f3")
+        draw.ellipse([cx - hub, cy - hub, cx + hub, cy + hub], fill=UI_NEEDLE)
 
     def _draw_bitmap_ring(self, draw, cx, cy, radius, state, color, timer_color, scale):
         cx *= scale
@@ -1413,7 +2051,7 @@ class UsageWidget:
             elif reset_fraction > 0:
                 draw.polygon(self._timer_slice_points(cx, cy, inner_radius, reset_fraction), fill=timer_color)
 
-        draw.arc(outer_box, start=0, end=360, fill="#273038", width=4 * scale)
+        draw.arc(outer_box, start=0, end=360, fill=UI_TRACK, width=4 * scale)
         percent = state.get("percent")
         if percent is not None:
             percent = max(0.0, min(100.0, float(percent)))
@@ -1482,6 +2120,7 @@ class UsageWidget:
         sample = self.system_sampler.sample()
         self._set_metric_target(self.cpu_gauge, sample.get("cpu"))
         self._set_metric_target(self.mem_gauge, sample.get("memory"))
+        self._set_metric_target(self.gpu_gauge, sample.get("gpu"))
         interval = max(1, int(self.cfg.get("system_poll_seconds") or 1))
         self.root.after(interval * 1000, self._update_system_metrics)
 
@@ -1496,6 +2135,7 @@ class UsageWidget:
             return
         self._animate_metric_gauge(self.cpu_gauge)
         self._animate_metric_gauge(self.mem_gauge)
+        self._animate_metric_gauge(self.gpu_gauge)
         if self.use_bitmap_dials:
             self._render_bitmap_dials()
         delay = max(50, int(self.cfg.get("gauge_animation_ms") or 100))
@@ -1534,7 +2174,10 @@ class UsageWidget:
     def _build_menu(self):
         self.menu = Menu(self.root, tearoff=0)
         self.menu.add_command(label="Refresh now", command=self.refresh_now)
-        self.menu.add_command(label="Open collector page", command=lambda: show_collector(self.port))
+        if (self.cfg.get("data_source") or "codex_cli").lower() == "web":
+            self.menu.add_command(label="Open collector page", command=lambda: show_collector(self.port))
+        else:
+            self.menu.add_command(label="Open usage page", command=open_usage_page)
         self.menu.add_separator()
         self.menu.add_command(label="Quit", command=self.close)
 
@@ -1544,7 +2187,10 @@ class UsageWidget:
         self.canvas.bind("<B1-Motion>", self._drag_window)
         self.canvas.bind("<ButtonRelease-1>", self._end_drag)
         self.canvas.bind("<Button-3>", self._show_menu)
-        self.canvas.bind("<Double-Button-1>", lambda event: show_collector(self.port))
+        if (self.cfg.get("data_source") or "codex_cli").lower() == "web":
+            self.canvas.bind("<Double-Button-1>", lambda event: show_collector(self.port))
+        else:
+            self.canvas.bind("<Double-Button-1>", lambda event: open_usage_page())
 
     def _show_menu(self, event):
         try:
@@ -1582,11 +2228,41 @@ class UsageWidget:
         thread = threading.Thread(target=self._worker, name="collector", daemon=True)
         thread.start()
 
+    def _add_kimi_usage(self, payload):
+        if not self.show_kimi_usage:
+            return payload
+        try:
+            kimi_five, kimi_week = parse_kimi_usage(self.kimi_client.query())
+            payload["kimi_five"] = kimi_five
+            payload["kimi_week"] = kimi_week
+        except Exception as exc:
+            log(f"Kimi usage query failed: {exc}")
+            payload["kimi_error"] = str(exc)
+            payload["kimi_five"] = {"value": "Error", "detail": str(exc), "percent": None}
+            payload["kimi_week"] = {"value": "Error", "detail": str(exc), "percent": None}
+        return payload
+
     def _worker(self):
         first_poll = True
         while not self.stop_event.is_set():
             try:
+                source = (self.cfg.get("data_source") or "codex_cli").lower()
+                if source not in ("codex_cli", "web"):
+                    raise RuntimeError("data_source must be 'codex_cli' or 'web'.")
+                if source == "codex_cli":
+                    payload = collect_codex_cli_usage(self.cfg)
+                    self.events.put(self._add_kimi_usage(payload))
+                    first_poll = False
+                    wait_for = max(5, int(self.cfg.get("poll_seconds") or 30))
+                    deadline = time.time() + wait_for
+                    while time.time() < deadline and not self.stop_event.is_set():
+                        if self.refresh_event.wait(0.2):
+                            self.refresh_event.clear()
+                            break
+                    continue
+
                 self.port = ensure_browser(self.cfg)
+                self.browser_started = True
                 capture = scrape_once(self.port, self.cfg, allow_reload=not first_poll)
                 if (
                     self.cfg.get("browser_mode") == "hidden"
@@ -1613,7 +2289,7 @@ class UsageWidget:
                     "title": capture.get("title", ""),
                     "updated": datetime.now().strftime("%H:%M:%S"),
                 }
-                self.events.put(payload)
+                self.events.put(self._add_kimi_usage(payload))
                 if (
                     not login
                     and self.cfg.get("minimize_edge_after_data")
@@ -1640,7 +2316,7 @@ class UsageWidget:
 
     def refresh_now(self):
         self.refresh_event.set()
-        self.canvas.itemconfigure(self.status_dot, fill="#f6c177")
+        self.canvas.itemconfigure(self.status_dot, fill=STATUS_WAIT)
 
     def _drain_events(self):
         while True:
@@ -1655,29 +2331,36 @@ class UsageWidget:
     def _apply_event(self, item):
         self.last = item
         if not item.get("ok"):
-            self.canvas.itemconfigure(self.status_dot, fill="#ff6b6b")
+            self.canvas.itemconfigure(self.status_dot, fill=STATUS_ERROR)
             self._set_period("five", {"value": "Error", "detail": trim_text(item.get("error", ""), 58), "percent": None})
-            self._set_period("week", {"value": "Collector", "detail": "Right-click > Open collector page", "percent": None})
+            self._set_period("week", {"value": "Error", "detail": trim_text(item.get("error", ""), 58), "percent": None})
             return
         if item.get("login"):
-            self.canvas.itemconfigure(self.status_dot, fill="#f6c177")
+            self.canvas.itemconfigure(self.status_dot, fill=STATUS_WAIT)
             self._set_period("five", {"value": "Login needed", "detail": "Finish ChatGPT login in the Edge window", "percent": None})
             self._set_period("week", item["week"])
         else:
-            self.canvas.itemconfigure(self.status_dot, fill="#5be49b")
+            self.canvas.itemconfigure(self.status_dot, fill=STATUS_WAIT if item.get("kimi_error") else STATUS_OK)
             self._set_period("five", item["five"])
             self._set_period("week", item["week"])
+        if self.show_kimi_usage:
+            self._set_period("kimi_five", item.get("kimi_five") or {"value": "Waiting", "percent": None})
+            self._set_period("kimi_week", item.get("kimi_week") or {"value": "Waiting", "percent": None})
 
     def _set_period(self, key, data):
         if key == "five":
-            ring, color = (None if self.use_bitmap_dials else self.five_ring), "#62c6ff"
+            ring, color = (None if self.use_bitmap_dials else self.five_ring), GPT_FIVE
+        elif key == "week":
+            ring, color = (None if self.use_bitmap_dials else self.week_ring), GPT_WEEK
+        elif key == "kimi_five":
+            ring, color = (None if self.use_bitmap_dials else self.kimi_five_ring), KIMI_FIVE
         else:
-            ring, color = (None if self.use_bitmap_dials else self.week_ring), "#5be49b"
+            ring, color = (None if self.use_bitmap_dials else self.kimi_week_ring), KIMI_WEEK
         pct = data.get("percent")
         if pct is None:
             text = self._compact_status_text(data.get("value", ""))
             progress = 0
-            fill = "#3a4247"
+            fill = UI_TRACK
         else:
             pct = max(0, min(100, float(pct)))
             text = f"{pct:.0f}%"
@@ -1723,7 +2406,9 @@ class UsageWidget:
 
     def close(self):
         self.stop_event.set()
-        if self.cfg.get("close_edge_on_exit"):
+        self.system_sampler.close()
+        self.kimi_client.close()
+        if self.browser_started and self.cfg.get("close_edge_on_exit"):
             close_collector(self.port)
         save_config(self.cfg)
         self.root.destroy()
@@ -1737,6 +2422,18 @@ def main():
     cfg = load_config()
     if not CONFIG_PATH.exists():
         save_config(cfg)
+    if "--json" in sys.argv:
+        result = collect_codex_cli_usage(cfg)
+        if cfg.get("show_kimi_usage", True):
+            kimi_client = KimiUsageClient(cfg)
+            try:
+                kimi_five, kimi_week = parse_kimi_usage(kimi_client.query())
+                result["kimi_five"] = kimi_five
+                result["kimi_week"] = kimi_week
+            finally:
+                kimi_client.close()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     app = UsageWidget()
     app.run()
 
