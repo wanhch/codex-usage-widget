@@ -599,6 +599,26 @@ def usage_from_kimi_window(window, title):
 
 
 def parse_kimi_usage(data):
+    # Kimi 2.x reports fractional usage instead of used/limit counters.
+    quota = data.get("quota")
+    usages = quota.get("usages") if isinstance(quota, dict) else None
+    if isinstance(usages, dict):
+        def convert(key, duration, unit):
+            usage = usages.get(key)
+            if not isinstance(usage, dict) or usage.get("usedRatio") is None:
+                return None
+            return {
+                "used": usage["usedRatio"],
+                "limit": 1,
+                "window": {"duration": duration, "unit": unit},
+                "reset_at": usage.get("resetAt"),
+            }
+
+        return (
+            usage_from_kimi_window(convert("limit5h", 5, "hour"), "K5"),
+            usage_from_kimi_window(convert("limit7d", 1, "week"), "K7"),
+        )
+
     windows = [data.get("summary")] + list(data.get("limits") or [])
     five_window = None
     week_window = None

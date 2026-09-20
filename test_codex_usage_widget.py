@@ -68,6 +68,32 @@ class ParseCodexRateLimitsTests(unittest.TestCase):
 
 
 class ParseKimiUsageTests(unittest.TestCase):
+    @patch("codex_usage_widget.time.time", return_value=0)
+    def test_v2_ratios_and_reset_countdowns(self, _mock_time):
+        data = {"kind": "ok", "quota": {"usages": {
+            "limit5h": {"usedRatio": 0, "resetAt": "1970-01-01T02:30:00Z"},
+            "limit7d": {"usedRatio": 0.022621, "resetAt": "1970-01-04T12:00:00Z"},
+        }, "extraUsage": None}}
+
+        five, week = widget.parse_kimi_usage(data)
+
+        self.assertEqual(five["percent"], 100)
+        self.assertAlmostEqual(week["percent"], 97.7379)
+        self.assertEqual(five["reset_fraction"], 0.5)
+        self.assertEqual(week["reset_fraction"], 0.5)
+        self.assertTrue(five["reset_text"])
+        self.assertTrue(week["reset_text"])
+
+    def test_v2_missing_ratio_is_unknown_not_full(self):
+        for missing in (None, {}, {"usedRatio": None}):
+            with self.subTest(missing=missing):
+                five, week = widget.parse_kimi_usage({"quota": {"usages": {
+                    "limit5h": missing,
+                    "limit7d": {"usedRatio": 1.2},
+                }}})
+                self.assertIsNone(five["percent"])
+                self.assertEqual(week["percent"], 0)
+
     def test_maps_five_hour_and_weekly_remaining_percent(self):
         data = {
             "summary": {
