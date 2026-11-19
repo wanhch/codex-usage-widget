@@ -491,7 +491,7 @@ class KimiUsageClient:
             raise RuntimeError("Kimi local server token is empty.")
         return token
 
-    def _request_usage(self, timeout=4):
+    def _request_usage(self):
         request = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/api/v1/oauth/usage",
             headers={
@@ -499,13 +499,17 @@ class KimiUsageClient:
                 "Accept": "application/json",
             },
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # Allow the CLI to return its own upstream timeout (about 8 seconds).
+        with urllib.request.urlopen(request, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))
         if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
             raise RuntimeError(payload.get("msg") or "Kimi usage query failed.")
         data = payload["data"]
         if data.get("kind") != "ok":
-            raise RuntimeError(data.get("message") or "Kimi login or subscription is unavailable.")
+            message = data.get("message") or "Kimi login or subscription is unavailable."
+            if "timed out" in message.lower():
+                raise TimeoutError(message)
+            raise RuntimeError(message)
         return data
 
     def start(self):
@@ -521,28 +525,19 @@ class KimiUsageClient:
             stderr=subprocess.DEVNULL,
             creationflags=flags,
         )
-        deadline = time.time() + 25
-        last_error = None
-        while time.time() < deadline:
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise RuntimeError(f"Kimi local server exited with code {self.process.returncode}.")
-            try:
-                self._request_usage(timeout=2)
+            if port_is_open(self.port):
                 return
-            except Exception as exc:
-                last_error = exc
-                time.sleep(0.4)
+            time.sleep(0.2)
         self.close()
-        raise RuntimeError(f"Kimi local usage service did not become ready: {last_error}")
+        raise RuntimeError("Kimi local service did not open its port within 25 seconds.")
 
     def query(self):
         self.start()
-        try:
-            return self._request_usage()
-        except Exception:
-            self.close()
-            self.start()
-            return self._request_usage()
+        return self._request_usage()
 
     def close(self):
         process = self.process
@@ -1570,6 +1565,8 @@ class UsageWidget:
         self.last = None
         self.system_sampler = SystemSampler()
         self.kimi_client = KimiUsageClient(self.cfg)
+        self.last_kimi_reading = {}
+        self.last_kimi_read_at = 0.0
         self.use_bitmap_dials = Image is not None and ImageTk is not None
         self.dial_scale = 4
         self.dial_photo = None
@@ -2255,11 +2252,19 @@ class UsageWidget:
             kimi_five, kimi_week = parse_kimi_usage(self.kimi_client.query())
             payload["kimi_five"] = kimi_five
             payload["kimi_week"] = kimi_week
+            self.last_kimi_reading = {"kimi_five": kimi_five, "kimi_week": kimi_week}
+            self.last_kimi_read_at = time.monotonic()
         except Exception as exc:
             log(f"Kimi usage query failed: {exc}")
             payload["kimi_error"] = str(exc)
-            payload["kimi_five"] = {"value": "Error", "detail": str(exc), "percent": None}
-            payload["kimi_week"] = {"value": "Error", "detail": str(exc), "percent": None}
+            if not isinstance(exc, TimeoutError):
+                self.last_kimi_reading.clear()
+            for key in ("kimi_five", "kimi_week"):
+                previous = self.last_kimi_reading.get(key, {})
+                if previous.get("percent") is not None and time.monotonic() - self.last_kimi_read_at <= 120:
+                    payload[key] = dict(previous, reset_text="stale", reset_fraction=None)
+                else:
+                    payload[key] = {"value": "Error", "detail": str(exc), "percent": None}
         return payload
 
     def _worker(self):
@@ -2349,6 +2354,7 @@ class UsageWidget:
             self.root.after(250, self._drain_events)
 
     def _apply_event(self, item):
+        previous = self.last or {}
         self.last = item
         if not item.get("ok"):
             self.canvas.itemconfigure(self.status_dot, fill=STATUS_ERROR)
@@ -2364,8 +2370,13 @@ class UsageWidget:
             self._set_period("five", item["five"])
             self._set_period("week", item["week"])
         if self.show_kimi_usage:
-            self._set_period("kimi_five", item.get("kimi_five") or {"value": "Waiting", "percent": None})
-            self._set_period("kimi_week", item.get("kimi_week") or {"value": "Waiting", "percent": None})
+            waiting = {"value": "Waiting", "percent": None}
+            five = item.get("kimi_five") or waiting
+            week = item.get("kimi_week") or waiting
+            self._set_period("kimi_five", five)
+            self._set_period("kimi_week", week)
+            if not item.get("kimi_error") and ("kimi_week" not in previous or previous.get("kimi_error")):
+                log(f"Kimi display updated: K5 {five['value']}, K7 {week['value']}")
 
     def _set_period(self, key, data):
         if key == "five":

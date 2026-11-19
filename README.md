@@ -29,6 +29,7 @@ https://chatgpt.com/codex/cloud/settings/analytics#usage
 - `kimi_cli_path`: 默认自动寻找 Kimi Code CLI；找不到时可填写 `kimi.exe` 的完整路径。
 - `show_kimi_usage`: 默认 `true`，显示 Kimi 的 `K5`、`K7` 两个额度环。
 - Kimi 额度兼容旧版和 2.x CLI 的返回格式，显示剩余百分比及重置倒计时。
+- Kimi 刷新超时时，圆环最多保留两分钟内的上次读数，并用 `stale` 替换倒计时。下次查询成功后自动恢复。
 - `system_poll_seconds`: 默认 `1`，控制 CPU、内存和 GPU 仪表盘刷新频率。
 - `gauge_animation_ms`: 默认 `100`，控制 CPU/内存指针动画刷新间隔，不影响系统采样频率。
 - `browser_mode`: 仅在 `data_source` 为 `web` 时使用。`visible` 使用可见的独立 Edge 采集窗口；`hidden` 会把完整 Edge 放到屏幕外并最小化；`headless` 更轻但可能被页面校验拦截。

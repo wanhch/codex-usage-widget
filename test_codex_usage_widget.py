@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import codex_usage_widget as widget
 
@@ -65,6 +65,44 @@ class ParseCodexRateLimitsTests(unittest.TestCase):
 
         self.assertEqual(result["percent"], 68)
         self.assertEqual(result["value"], "68% remaining")
+
+
+class KimiPollingTests(unittest.TestCase):
+    @patch("codex_usage_widget.find_kimi_cli", return_value="kimi.exe")
+    @patch("codex_usage_widget.find_free_port", return_value=58649)
+    @patch("codex_usage_widget.port_is_open", return_value=True)
+    @patch("codex_usage_widget.subprocess.Popen")
+    def test_one_quota_request_per_poll_even_after_timeout(self, popen, *_):
+        client = widget.KimiUsageClient({})
+        popen.return_value.poll.return_value = None
+        with patch.object(client, "_request_usage", side_effect=[1, TimeoutError(), 3]) as request:
+            self.assertEqual(client.query(), 1)
+            with self.assertRaises(TimeoutError):
+                client.query()
+            self.assertEqual(client.query(), 3)
+        self.assertEqual(request.call_count, 3)
+        popen.assert_called_once()
+
+    @patch("codex_usage_widget.log")
+    def test_timeout_marks_recent_reading_then_expires_and_recovers(self, _log):
+        app = widget.UsageWidget.__new__(widget.UsageWidget)
+        app.show_kimi_usage = True
+        app.last_kimi_reading = {}
+        app.last_kimi_read_at = 0
+        data = {"quota": {"usages": {"limit7d": {"usedRatio": 0.25}}}}
+        app.kimi_client = Mock()
+        app.kimi_client.query.side_effect = [data, TimeoutError(), TimeoutError(), data]
+        def poll(now):
+            with patch("codex_usage_widget.time.monotonic", return_value=now):
+                return app._add_kimi_usage({})
+
+        fresh = poll(100)
+        stale = poll(130)
+        self.assertEqual(stale["kimi_week"]["percent"], 75)
+        self.assertEqual(stale["kimi_week"]["reset_text"], "stale")
+        self.assertIsNone(stale["kimi_five"]["percent"])
+        self.assertIsNone(poll(221)["kimi_week"]["percent"])
+        self.assertEqual(poll(250), fresh)
 
 
 class ParseKimiUsageTests(unittest.TestCase):
